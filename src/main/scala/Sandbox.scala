@@ -16,11 +16,14 @@
   * limitations under the License.
   */
 
+import cats.data.WriterT
+import cats.functor.Bifunctor
+import org.gdget.partitioned._
+import org.gdget.partitioned.ParScheme._
 import org.gdget.data.query._
-import org.gdget.Edge
-
-import org.gdget.data._
+import org.gdget.{Edge, Graph}
 import org.gdget.std.all._
+
 import language.higherKinds
 import scala.concurrent._
 
@@ -31,17 +34,19 @@ import scala.concurrent._
 object Sandbox extends App {
 
   val a = Map(
-    1 -> (Set(2,3), Set(4,5,6)),
-    2 -> (Set(5,3), Set(1)),
-    3 -> (Set(6,4), Set(2,1)),
-    4 -> (Set(1), Set(3)),
-    5 -> (Set(1), Set(2,6)),
-    6 -> (Set(1,5), Set(3))
+    1 -> 1.part,
+    2 -> 1.part,
+    3 -> 1.part,
+    4 -> 1.part,
+    5 -> 2.part,
+    6 -> 2.part
   )
 
   type UTuple[A] = (A, A)
+  type Scheme[A] = Map[A, PartId]
 
-  val b: SimpleGraph[Int, UTuple] = SimpleGraph[Int, UTuple](
+  val b: LogicalParGraph[Map[?, PartId], Int, UTuple] = LogicalParGraph[Map[?, PartId], Int, UTuple](
+    a,
     1 -> 4,
     1 -> 5,
     1 -> 6,
@@ -54,25 +59,48 @@ object Sandbox extends App {
     6 -> 3
   )
 
-  implicitly[Edge[UTuple]]
-
-  import SimpleGraph._
   import cats.syntax.traverse._
   import cats._
   import cats.std.all._
   import ExecutionContext.Implicits.global
 
+  import LogicalParGraph._
+
+  implicitly[Edge[UTuple]]
+  implicitly[ParScheme[Scheme]]
+  implicitly[Monad[Either[String, ?]]]
+  implicitly[Bifunctor[WriterT[Option, ?, ?]]]
+  //  implicitly[Graph[LogicalParGraph[Map[?, PartId], ?, ?[_]]]]
+
+  //  def test[S[_]: ParScheme]: Graph[LogicalParGraph[S, ?, ?[_]]] = Graph[LogicalParGraph[S, ?, ?[_]]]
+
+  //  implicit val gimp = test[Scheme]
+
+  //Todo - make op object which means you only have to declare types once.
+  //E.G. val op = QueryBuilder[G, V, E]
+  // op.get(1)
+  // op.traverseEdge(...)
+  // If we think op.blah is cumbersome, then how about ...?
+
   //TODO: Use kleisli composition to avoid having to flatten at the end?
-  val query: QueryIO[SimpleGraph, Int, UTuple, Option[(Int, Int)]] = {
+
+  //TODO: What about a Queryable function which takes a Graph and a ParScheme. Perhaps also an implicit QueryBuilder
+  //  which I could then use to prop up type inference?
+
+  def query[S[_]: ParScheme]: QueryIO[LogicalParGraph[S, ?, ?[_]], Int, UTuple, Option[(Int, Int)]] = {
     for {
-      v <- get[SimpleGraph, Int, UTuple](1)
-      p <- v.traverse(traverseEdge[SimpleGraph, Int, UTuple](_, (1, 4)))
+      v <- get[LogicalParGraph[S, ?, ?[_]], Int, UTuple](1)
+      p <- v.traverse(traverseEdge[LogicalParGraph[S, ?, ?[_]], Int, UTuple](_, (1, 4)))
     } yield p.flatten
   }
 
-  val result = query.transK[Future].run(b)
-  result onSuccess {
+  import org.gdget.loom.experimental._
+
+  val result = query[Scheme].transKWith[Future](countingInterpreterK).run(b)
+  result.onSuccess {
     case Some(edge) => println(s"Result is: $edge")
+    case None => println("The query returns nothing")
   }
+
 
 }
