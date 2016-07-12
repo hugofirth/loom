@@ -45,7 +45,7 @@ package object experimental {
         fa match {
           case TraverseEdge(v, e) =>
             fa.op { g =>
-              if(g.partitionOf(v) != Edge[E].other(e, v))
+              if(g.partitionOf(v) != Edge[E].other(e, v).flatMap(g.partitionOf))
                 println("IPT!")
               val n = Graph[LogicalParGraph[S, ?, ?[_]]].neighbourhood(g, v)
               n.fold(None: Option[E[V]])(_.edges.find(_ == e))

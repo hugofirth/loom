@@ -37,10 +37,12 @@ object Sandbox extends App {
     1 -> 1.part,
     2 -> 1.part,
     3 -> 1.part,
-    4 -> 1.part,
+    4 -> 2.part,
     5 -> 2.part,
     6 -> 2.part
   )
+
+  println(s"The partition map: $a")
 
   type UTuple[A] = (A, A)
   type Scheme[A] = Map[A, PartId]
