@@ -40,31 +40,36 @@ package object experimental {
     new (QueryOp[LogicalParGraph[S, ?, ?[_]], V, E, ?] ~> Kleisli[M, LogicalParGraph[S, V, E], ?]) {
       import QueryOp._
 
+      // Yucky mutable state, but what you gonna do? :( Right now the alternatives (StateT[M, ...] ?) are bending my brain.
+      // TODO: Fix this interpreter to possibly use State. Or implement transST in gdget.data.query?
+      private var ipt = 0
+      def iptCount = ipt 
+
       //TODO: Use ===
       def apply[A](fa: QueryOp[LogicalParGraph[S, ?, ?[_]], V, E, A]): Kleisli[M, LogicalParGraph[S, V, E], A] = {
         fa match {
           case TraverseEdge(v, e) =>
             fa.op { g =>
               if(g.partitionOf(v) != Edge[E].other(e, v).flatMap(g.partitionOf))
-                println("IPT!")
+                ipt += 1
               val n = Graph[LogicalParGraph[S, ?, ?[_]]].neighbourhood(g, v)
               n.fold(None: Option[E[V]])(_.edges.find(_ == e))
             }
           case TraverseInNeighbour(v, in) =>
             fa.op { g =>
               if(g.partitionOf(v) != g.partitionOf(in))
-                println("IPT!")
+                ipt += 1
               val n = Graph[LogicalParGraph[S, ?, ?[_]]].neighbourhood(g, v)
               n.fold(None: Option[V])(_.in.keySet.find(_ == in))
             }
           case TraverseOutNeighbour(v, out) =>
             fa.op { g =>
               if(g.partitionOf(v) != g.partitionOf(out))
-                println("IPT!")
+                ipt += 1
               val n = Graph[LogicalParGraph[S, ?, ?[_]]].neighbourhood(g, v)
               n.fold(None: Option[V])(_.out.keySet.find(_ == out))
             }
-          case op => op.defaultTransK[M]
+          case _ => fa.defaultTransK[M]
         }
       }
     }
