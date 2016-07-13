@@ -19,4 +19,29 @@
  /** Experiment trait to hold implementation common to all experiments (e.g. IO).
    *
    */
+sealed trait Experiment[S[_], V, E[_]] {
+
+  /** Typeclass instances for S & E */
+  implicit def S: ParScheme[S]
+  implicit def E: Edge[E]
+
+  /** Map of query idenifiers to queries themselves (QueryIO objects) */
+  def queries: Map[String, QueryIO[LogicalParGraph[S, ?, ?[_]], V, E, _]]
+
+  /** Stream of queries made up from the values from `queries`.
+    * 
+    * The frequency of each distinct query pattern may change over time.
+    */
+  def queryStream: Stream[QueryIO[LogicalParGraph[S, ?, ?[_]], V, E, _]] 
+
+  
+  //time function: ((G, Q) => A): (Int, A) ... or Make an "Instrumented" Applicative?
+  
+  //run function which produces a result.... where are we doing IO?
+  
+}
+
+object Experiment {
+  //Result case class, which takes Time and IPT at a minimum
+}
 
