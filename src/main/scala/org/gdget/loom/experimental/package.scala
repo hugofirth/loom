@@ -42,6 +42,7 @@ package object experimental {
 
       // Yucky mutable state, but what you gonna do? :( Right now the alternatives (StateT[M, ...] ?) are bending my brain.
       // TODO: Fix this interpreter to possibly use State. Or implement transST in gdget.data.query?
+      // Note: This is especially bad as accessing this member requires reflection (why can't we extend ~>[_,_] again?)
       private var ipt = 0
       def iptCount = ipt 
 
