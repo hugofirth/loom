@@ -19,14 +19,13 @@ package org.gdget.loom.experimental
 
 import language.higherKinds
 import scala.concurrent._
- 
 import org.gdget.data.query._
 import org.gdget.Edge
 import org.gdget.partitioned._
-
 import cats._
 import cats.std.all._
 import cats.syntax.semigroup._
+import org.apache.commons.math3.random.{JDKRandomGenerator, RandomDataGenerator}
 
  /** Experiment trait to hold implementation common to all experiments (e.g. IO).
    *
@@ -52,7 +51,38 @@ sealed trait Experiment[S[_], V, E[_]] {
     * 
     * The frequency of each distinct query pattern may change over time.
     */
-  def queryStream: QStream
+  def queryStream(seed: Int): QStream = {
+    def selectRange(ranges: Vector[(String, Double, Double)], offset: Double, value: Double) = {
+      //Make sure offset is < 7
+      val effectiveOffset = offset % 7
+      //Add offset to value
+      //Box value in -3.5,3.5 range
+      val effective = if(value + effectiveOffset >= 3.5) (value + effectiveOffset) - 7 else value + effectiveOffset
+      //Find the range which the effective value falls within. Note that ranges are min inclusive max exclusive
+      ranges.find { case (key, min, max) => effective >= min && effective < max } map(_._1)
+    }
+
+    //Create a vector of "Ranges" (i.e. (Double, Double)), one for each value in queries map.
+    //A range of 7 around 0 encompasses ~100% of values in a standard normal distribution
+    val rangeSize = 7/queries.size
+    //Fold over queries to construct ranges
+    val (_, ranges) = queries.foldLeft((-3.5, Vector.empty[(String, Double, Double)])) { (acc, entry) =>
+      val (floor, rs) = acc
+      val key = entry._1
+      (floor + rangeSize, rs :+ ((key, floor, floor+rangeSize)))
+    }
+
+    //Mutability, but its all method local.
+    //Not too worried about randomness proprties, so JDK Random should suffice.
+    // http://commons.apache.org/proper/commons-math/userguide/random.html is an interesting read though.
+    val rand = new JDKRandomGenerator(seed)
+    val rng = new RandomDataGenerator(rand)
+
+    //Create stream of doubles which increment by offset
+    val offsets = Stream.from(0).map(_.toDouble/10)
+    //map over lazy stream, identifying queries for each new random value.
+    offsets.flatMap(o => selectRange(ranges, o, rng.nextGaussian(0, 1))).flatMap(queries.get)
+  }
 
   /** Takes any function from a graph to a return type A, and lazily measures the execution
     * time in milliseconds, returning a function from a graph to a tuple (Long, A).
@@ -76,7 +106,7 @@ sealed trait Experiment[S[_], V, E[_]] {
     import Experiment._
     import LogicalParGraph._
 
-    val resultStream = queryStream.take(n).map { q => 
+    val resultStream = queryStream(435627192).take(n).map { q =>
       val timedQ = time { graph =>     
         val interpreter = countingInterpreterK[Future, S, V, E]
         val query = q.transKWith[Future](interpreter).run(graph)
