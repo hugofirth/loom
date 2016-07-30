@@ -142,6 +142,9 @@ case class MusicBrainzExperiment[S[_], V, E[_]](g: LogicalParGraph[S, V, E])(imp
   val q2 = ???
 
   val q3 = ???
+
+  /** Map of query idenifiers to queries themselves (QueryIO objects) */
+  override def queries: Map[String, Q] = ???
 }
 
 
