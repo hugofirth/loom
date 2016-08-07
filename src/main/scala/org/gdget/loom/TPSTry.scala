@@ -21,6 +21,10 @@ import language.higherKinds
 import scala.collection.mutable
 import org.gdget.{Edge, Graph}
 
+import cats._
+
+import cats.syntax.all._
+
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 
@@ -35,7 +39,7 @@ import scala.collection.mutable.ArrayBuffer
   *
   * @author hugofirth
   */
-sealed trait TPSTry[G[_, _[_]], V, E[_]] {
+sealed trait TPSTry[G[_, _[_]], V, E[_]] { self =>
 
   import TPSTry._
 
@@ -49,14 +53,24 @@ sealed trait TPSTry[G[_, _[_]], V, E[_]] {
     */
   def signature: BigInt
 
+  /** Internal representation of this TPSTry node's associated graph G. Is a set of edges */
+  protected def repr: Set[E[V]]
+
   /** The map from Keys to child subTries
     *
     * Keys are essentially multiplication factors. A trie node's `signature`
     */
   def children: Map[Factor, TPSTry[G, V, E]]
 
-  /** Return the graph associated with this TPSTry node, if it exists */
-  def valueOption: Option[G[V, E]]
+  /** Add a child to this TPSTry node */
+  protected def addChild(factor: Factor, child: TPSTry[G, V, E]): TPSTry[G, V, E] =
+    Node(self.repr, self.support, self.signature, self.children + (factor -> child))
+
+  /** Return the graph associated with this TPSTry node, if it exists. This creates a default graph instance for the type
+    * G from an internal representation of a set of edges
+    */
+  def graphOption(implicit gEv: Graph[G], eEv: Edge[E]): Option[G[V, E]] =
+    repr.headOption.map(Graph[G].point(_)).map(g => Graph[G].plusEdges(g, repr.tail.toList:_*))
 
   /** A simple counter of how many times the graph represented by this node has been added to the TPSTry */
   def support: Int
@@ -82,115 +96,50 @@ sealed trait TPSTry[G[_, _[_]], V, E[_]] {
     */
   def add(graph: G[V, E])(implicit gEv: Graph[G], eEv: Edge[E], sEv: Signature[V]) = {
 
-    //Recursive function to build sigTable. Not Tail recursive so a risk of stack overflow.
-    //TODO: Clean this up. Is there a tree merge algorithm which will mean we don't have to build this table?
-    //If not - then perhaps make it tail recursive somehow.
-    def sigTable(node: TPSTry[G, V, E], depth: Int,
-                 table: mutable.ArrayBuffer[mutable.HashMap[BigInt, TPSTry[G, V, E]]]):
-    mutable.ArrayBuffer[mutable.HashMap[BigInt, TPSTry[G, V, E]]] = {
-      //Initialise table at depth
-      table(depth) = mutable.HashMap.empty[BigInt, TPSTry[G, V, E]]
-      //Add signature->node pairs to table for all children of node, then do the same for the children, at depth+1
-      node.children.values.foldLeft(table) { (acc, child) =>
-        table(depth).update(child.signature, child)
-        sigTable(child, depth + 1, table)
+    def corecurse(parent: TPSTry[G, V, E], es: Set[E[V]], depth: Int, sigs: SigTable[G, V, E]): TPSTry[G, V, E] = {
+
+      //Get set of vertices from set of neighbours
+      val vs = es.map(Edge[E].left) ++ es.map(Edge[E].right)
+      //Get the set of all edges incident to es, including es
+      val neighbourhoods = vs.flatMap(Graph[G].neighbourhood(graph, _))
+      //Remove es to get the set of edges which are incident to es but not *in* es
+      val ns = neighbourhoods.flatMap(_.edges) &~ es
+      //Fold Left over each indicent edge en
+      ns.foldLeft(parent) { (p, en) =>
+        //Initialise sigsTable at this depth if it doesn't exist yet
+        if(sigs.size < depth) sigs(depth) = mutable.HashMap.empty[BigInt, NodeBuilder[G, V, E]]
+        // Calculate factor of en
+        val (l, r) = Edge[E].vertices(en)
+        val factor = Signature[V].signature(l) - Signature[V].signature(r)
+        val enSig = factor * p.signature
+        //create a builder if one is not found in sigTable
+        val b = (sigs(depth).get(enSig), p.children.get(factor)) match {
+          case (Some(existing), _) => existing.support += 1; existing
+          case (None, Some(c)) => NodeBuilder(c.repr, c.support + 1, c.signature, c.children)
+          case _ => NodeBuilder(es + en, 1, enSig, Map.empty[Factor, TPSTry[G, V, E]])
+        }
+
+        //Add/Update builder in map
+        sigs(depth).update(enSig, b)
+        //Add as child of p, and recurse, passing on mutable sigTable state
+        p.addChild(factor, corecurse(b, es + en, depth + 1, sigs))
       }
     }
 
-    def corecurse(trie: TPSTry[G, V, E], e: E[V], fac: Seq[Factor]): TPSTry[G, V, E] = {
-      ???
-    }
+    //TODO: Get rid of the idea that TPSTry as a datastructure is subdivisible. It isn't really. Doesn't make sense that it should be.
+    //This would mean redefining TPSTry as a case class and creating TPSTryNode sealed trait with all the same cases it has now.
+    //All algorithms can still be defined recursively but can't add a graph to a Node, only to the TPSTry itself, which will keep a
+    // root reference. Still need to work on a remove method, as that *does* make sense in this context. Same approach:
+    //Recurse, remove support, if support is 0 remove node and stop recursing. Any time we change support, (or remove a node?), we replace with a builder
+    // and put the builder in a sigTable which we carry along with us.
 
-    /** Attempt 3 */
-    // //Outside recursive "loop"
-    // Create empty root node (graph: None, signature: 1)
-    val r = Root[G, V, E]()
-    // Get edges in G, es
-    val es = Graph[G].edges(graph)
-    // Fold left over es, starting with the empty TPSTry we just created (the root node) and the an empty
-    // ArrayBuffer[Map[BigInt, TPSTry]] which associates signatures to unique TPSTry nodes at a given depth.
-    es.foldLeft((r, mutable.ArrayBuffer.empty[mutable.HashMap[BigInt, TPSTry[G, V, E]]])) { (trie, e) =>
-      val (tpstry, sigs) = trie
-      // For each e
-      // Initialise a depth idx of 0
-      val depth = 0
-      if(sigs.size < depth) sigs(depth) = mutable.HashMap.empty[BigInt, TPSTry[G, V, E]]
-      // Calculate factor of e
-      val (l, r) = Edge[E].vertices(e)
-      val factor = Signature[V].signature(l) - Signature[V].signature(r)
-      // Does parent sig (1 in this case) * factor of e exist in Map[BigInt, TPSTry] at this idx in ArrayBuffer?
-      val n = sigs(depth).get(factor) match {
-        case Some(t) => Node(t.valueOption, t.support+1, t.signature, t.children)
-        case None => Node(None /* fix this */, 1, factor, Map.empty[Factor, TPSTry[G, V, E]])
-      }
-
-      val n = sigs(depth).get(factor).fold(Node(Graph[G].point(e), 1, factor, Map.empty[Factor, TPSTry[G, V, E]])) { t =>
-        Node(t.valueOption, t.support+1, t.signature, t.children)
-      }
-
-      sigs(depth).update(factor, n)
-
-      tpstry.children.updated(factor, /* recursive call */)
-
-      // If yes, increment support value (inside the recursive function we would also add a branch from parent node to
-      // the node from the Map, but at the root level that branch is guaranteed to already exist)
-      // Else, create TPSTry node n for e, also add to ArrayBuffer
-      // TPSTry root.children update(factor -> recurse(n, Set[E](e), idx+1))
-      // // Recursive function starts here
-      // Get neighbours ns of e which aren't in the Set[E]
-      // fold left over ns, taking ArrayBuffer and parent TPSTry node n
-      //  Calculate the factor of ns * parent sig n.signature
-      //  Check if that signature ns * parent sig exists in Map[BigInt, TPSTry] at this idx in the ArrayBuffer?
-      //  If yes, increment support value and get corresponding TPSTry node n'
-      //  Else Create TPSTry node n' for ns. Also add to ArrayBuffer at depth
-      //  parent.children update(ns factor -> recurse(n', Set[E](e, ns), idx+1
-      ???
-    }
-
-
-
-
-    /** Attempt 2 */
-    //Construction of TPSTry from a single G
-    //Add empty (None) root node, gets us TPSTry t
-    //FoldLeft over edges e in G. (Carry along a Vector[Map[BigInt, TPSTry]] lookup, maybe as well as an int idx)
-    //For each e,
-    //  calculate its Factor,
-    //  calculate sig as factor * sig of parent
-    //  check lookup for that BigInt at this idx in the vector
-    //  if it exists, then get the TPSTry node n and increment support
-    //  else, create e's corresponding TPSTry Node n and add it to lookup at idx
-    //  add n as a child of t, giving us a new TPSTry t1
-    //
-    //  Get the set of e's incident edges e1 which aren't in e
-    //  Increment table idx, pass on the trie root and the parent node of e1.
-    //  For each e+e1 (back to 108) ...
-
-    // NOTE: Before you move on to the next e in the outermost Foreach loop, you should set idx back to 1.
-
-
-
-
-    /** Attempt 1 */
-    //FoldLeft over edges in graph, starting with *this* TPSTry. For each edge, call co-recurse.
-
-      //Corecurse takes a graph, an edge, a signature, a factor, and a TPSTry ?
-        //(OR it could maybe take a TPSTry, an edge and a Seq of factors)
-        //Does the TPSTry node given by the signature (Seq of factors + factor) exist? //How do we do this lookup to create Dag?
-          //If yes
-            //Is there a branch from TPSTry(Seq of factors) with key/factor == edge factor?
-              //If no - create one
-            //Incremement support value of TPSTry(Seq of factors + edge factor)
-          //If no then get parent graph add e, and create child node with edge factor key and new g + signature.
-            //Give support value of 1.
-        //Does edge have any incident neighbours not in graph ?
-
-
-    //Signature Table an ArrayBuffer of Sets of BigInts
-    var sigs = sigTable(this, 0, new mutable.ArrayBuffer[mutable.HashMap[BigInt, TPSTry[G, V, E]]])
-
-    //Weave algorithm here we go
     val edges = Graph[G].edges(graph)
+    val sigTable = mutable.ArrayBuffer.empty[mutable.HashMap[BigInt, NodeBuilder[G, V, E]]]
+    edges.foldLeft(this) { (trie, edge) =>
+      corecurse(trie, Set(edge), 0, sigTable)
+    }
+
+    //build() the builder Trie
   }
 
 
@@ -201,10 +150,91 @@ object TPSTry {
   /** Type Alias for Int: Factor to avoid confusion */
   type Factor = Int
 
+  /** Type Alias for signature table, which is a little verbose */
+  type SigTable[G[_, _[_]], V, E[_]] = mutable.ArrayBuffer[mutable.HashMap[BigInt, NodeBuilder[G, V, E]]]
+
   /** The empty TPSTry, essentially a root node with no children */
   def empty[G[_, _[_]], V, E[_]] = Root[G, V, E]()
 
-  private[loom] case class Node[G[_, _[_]], V, E[_]](valueOption: Option[G[V, E]],
+  /** apply method for building TPSTry++ from provided graph */
+  //TODO: Be more DRY using pattern matching.
+  def apply[G[_, _[_]]: Graph, V: Signature, E[_]: Edge](g: G[V, E]): TPSTry[G, V, E] = {
+
+    //TODO: Replace mess below with Root[...]().add(g)
+    //Corecursive method to build up TPSTry from g beyond depth 1 from root
+    def corecurse(n: NodeBuilder[G, V, E], g: G[V, E], es: Set[E[V]], depth: Int, sigs: SigTable[G, V, E]): TPSTry[G, V, E] = {
+      //Get set of vertices from set of neighbours
+      val vs = es.map(Edge[E].left) ++ es.map(Edge[E].right)
+      //Get the set of all edges incident to es, including es
+      val neighbourhoods = vs.flatMap(Graph[G].neighbourhood(g, _))
+      //Remove es to get the set of edges which are incident to es but not *in* es
+      val ns = neighbourhoods.flatMap(_.edges) &~ es
+      (ns.foldLeft((n, sigs)) { (trie, e) =>
+        val (parent, s) = trie
+        //Initialise sigs table at this depth if it doesn't already exist
+        if(s.size < depth) s(depth) = mutable.HashMap.empty[BigInt, NodeBuilder[G, V, E]]
+        // Calculate factor of e
+        val (l, r) = Edge[E].vertices(e)
+        val factor = Signature[V].signature(l) - Signature[V].signature(r)
+        //Does parent node signature * factor exist at this level of s?
+        val nSig = parent.signature * factor
+        val n = s(depth).get(nSig) match {
+          case Some(t) =>
+            //If yes then increment support
+            t.support += 1
+            t
+          case None =>
+            //Otherwise, crate a graph from es and a TPSTry node
+            NodeBuilder[G, V, E](es + e, 1, nSig, Map.empty[Factor, TPSTry[G, V, E]])
+        }
+
+        //Add/Update Node n in ArrayBuffer at depth
+        s(depth).update(nSig, n)
+
+        //Recurse
+        parent.children += (factor -> corecurse(n, g, es + e, depth + 1, s))
+        //Return parent and sig table
+        (parent, s)
+      })._1
+    }
+
+    // Create empty root node (graph: None, signature: 1) Note we do *not* use empty[G, V, E] here as this returns an
+    // immutable TPSTry, whilst we are trying to build one
+    val r = NodeBuilder(Set.empty[E[V]], 0, 1, Map.empty[Factor, TPSTry[G, V, E]])
+    // Get edges in G, es
+    val es = Graph[G].edges(g)
+    // Fold left over es, starting with the empty TPSTry we just created (the root node) and the an empty
+    // ArrayBuffer[Map[BigInt, TPSTry]] which associates signatures to unique TPSTry nodes at a given depth.
+    (es.foldLeft((r, mutable.ArrayBuffer.empty[mutable.HashMap[BigInt, NodeBuilder[G, V, E]]])) { (trie, e) =>
+      val (root, sigs) = trie
+      // For each e
+      // Initialise a depth idx of 0
+      val depth = 0
+      if(sigs.size < depth) sigs(depth) = mutable.HashMap.empty[BigInt, NodeBuilder[G, V, E]]
+      // Calculate factor of e
+      val (l, r) = Edge[E].vertices(e)
+      val factor = Signature[V].signature(l) - Signature[V].signature(r)
+      // Does parent sig (1 in this case) * factor of e exist in Map[BigInt, TPSTry] at this idx in ArrayBuffer?
+      val n = sigs(depth).get(factor) match {
+        case Some(t) =>
+          // If yes, increment support value (inside the recursive function we would also add a branch from parent node
+          // to the node from the Map, but at the root level that branch is guaranteed to already exist)
+          t.support += 1
+          t
+        case None =>
+          // Else, create TPSTry node n for e
+          NodeBuilder[G, V, E](Set(e), 1, factor, Map.empty[Factor, TPSTry[G, V, E]])
+      }
+
+      //Add/Update Node n in ArrayBuffer at depth
+      sigs(depth).update(factor, n)
+
+      (root.copy(support = root.support+1, children = root.children.updated(factor, corecurse(n, g, Set(e), depth+1, sigs))), sigs)
+    })._1
+
+  }
+
+  private[loom] case class Node[G[_, _[_]], V, E[_]](repr: Set[E[V]],
                                                      support: Int,
                                                      signature: BigInt,
                                                      children: Map[Factor, TPSTry[G, V, E]]) extends TPSTry[G, V, E] {
@@ -213,11 +243,34 @@ object TPSTry {
 
   }
 
+  private[loom] case class Tip[G[_, _[_]], V, E[_]](repr: Set[E[V]], support: Int,
+                                                    signature: BigInt) extends TPSTry[G, V, E] {
+
+    val isEmpty = true
+
+    val children = Map.empty[Factor, TPSTry[G, V, E]]
+  }
+
+  private[loom] case class NodeBuilder[G[_, _[_]], V, E[_]](repr: Set[E[V]],
+                                                            var support: Int,
+                                                            signature: BigInt,
+                                                            var children: Map[Factor, TPSTry[G, V, E]])
+    extends TPSTry[G, V, E] {
+
+    val isEmpty = false
+
+    override def addChild(factor: Factor, child: TPSTry[G, V, E]): TPSTry[G, V, E] = {
+      this.children += (factor -> child)
+      this
+    }
+  }
+
+
   private[loom] case object Root extends TPSTry[Nothing, Nothing, Nothing] {
 
     def apply[G[_, _[_]], V, E[_]](): TPSTry[G, V, E] = this.asInstanceOf[TPSTry[G, V, E]]
 
-    def unapply[G[_, _[_]], V, E[_]](a: TPSTry[G, V, E]) = a.isEmpty
+    def unapply[G[_, _[_]], V, E[_]](a: TPSTry[G, V, E]) = a.signature == this.signature
 
     val isEmpty: Boolean = true
 
@@ -225,9 +278,10 @@ object TPSTry {
 
     val children = Map.empty[Factor, TPSTry[Nothing, Nothing, Nothing]]
 
-    val valueOption = None
+    val repr = Set.empty[Nothing]
 
     val support = 0
+
   }
 
 
