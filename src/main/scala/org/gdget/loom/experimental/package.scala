@@ -22,7 +22,7 @@ import cats.data.Kleisli
 import cats.{Monad, ~>}
 import org.gdget.{Edge, Graph}
 import org.gdget.data.query._
-import org.gdget.partitioned.{LogicalParGraph, ParScheme}
+import org.gdget.partitioned._
 
 /** Package object containing type definitions and helper functions used throughout the experiments of the LOOM system.
   *
@@ -36,8 +36,8 @@ package object experimental {
     * Additionally to assuming a specific Graph implementation, this query interpreter will count cross partition
     * traversals
     */
-  def countingInterpreterK[M[_]: Monad, S[_]: ParScheme, V, E[_]: Edge] =
-    new (QueryOp[LogicalParGraph[S, ?, ?[_]], V, E, ?] ~> Kleisli[M, LogicalParGraph[S, V, E], ?]) {
+  def countingInterpreterK[M[_]: Monad, V: Partitioned, E[_]: Edge] =
+    new (QueryOp[LogicalParGraph, V, E, ?] ~> Kleisli[M, LogicalParGraph[V, E], ?]) {
       import QueryOp._
 
       // Yucky mutable state, but what you gonna do? :( Right now the alternatives (StateT[M, ...] ?) are bending my brain.
@@ -47,27 +47,27 @@ package object experimental {
       def iptCount = ipt 
 
       //TODO: Use ===
-      def apply[A](fa: QueryOp[LogicalParGraph[S, ?, ?[_]], V, E, A]): Kleisli[M, LogicalParGraph[S, V, E], A] = {
+      def apply[A](fa: QueryOp[LogicalParGraph, V, E, A]): Kleisli[M, LogicalParGraph[V, E], A] = {
         fa match {
           case TraverseEdge(v, e) =>
             fa.op { g =>
               if(g.partitionOf(v) != Edge[E].other(e, v).flatMap(g.partitionOf))
                 ipt += 1
-              val n = Graph[LogicalParGraph[S, ?, ?[_]]].neighbourhood(g, v)
+              val n = Graph[LogicalParGraph, V, E].neighbourhood(g, v)
               n.fold(None: Option[E[V]])(_.edges.find(_ == e))
             }
           case TraverseInNeighbour(v, in) =>
             fa.op { g =>
               if(g.partitionOf(v) != g.partitionOf(in))
                 ipt += 1
-              val n = Graph[LogicalParGraph[S, ?, ?[_]]].neighbourhood(g, v)
+              val n = Graph[LogicalParGraph, V, E].neighbourhood(g, v)
               n.fold(None: Option[V])(_.in.keySet.find(_ == in))
             }
           case TraverseOutNeighbour(v, out) =>
             fa.op { g =>
               if(g.partitionOf(v) != g.partitionOf(out))
                 ipt += 1
-              val n = Graph[LogicalParGraph[S, ?, ?[_]]].neighbourhood(g, v)
+              val n = Graph[LogicalParGraph, V, E].neighbourhood(g, v)
               n.fold(None: Option[V])(_.out.keySet.find(_ == out))
             }
           case _ => fa.defaultTransK[M]

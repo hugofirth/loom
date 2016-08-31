@@ -19,7 +19,6 @@
 import cats.data.WriterT
 import cats.functor.Bifunctor
 import org.gdget.partitioned._
-import org.gdget.partitioned.ParScheme._
 import org.gdget.data.query._
 import org.gdget.{Edge, Graph}
 import org.gdget.std.all._
@@ -33,32 +32,21 @@ import scala.concurrent._
   */
 object Sandbox extends App {
 
-  val a = Map(
-    1 -> 1.part,
-    2 -> 1.part,
-    3 -> 1.part,
-    4 -> 2.part,
-    5 -> 2.part,
-    6 -> 2.part
-  )
-
-  println(s"The partition map: $a")
+  val (v1, v2, v3, v4, v5, v6) = (1 -> 1.part, 2 -> 1.part, 3 -> 1.part, 4 -> 2.part, 5 -> 2.part, 6 -> 2.part)
 
   type UTuple[A] = (A, A)
-  type Scheme[A] = Map[A, PartId]
 
-  val b: LogicalParGraph[Map[?, PartId], Int, UTuple] = LogicalParGraph[Map[?, PartId], Int, UTuple](
-    a,
-    1 -> 4,
-    1 -> 5,
-    1 -> 6,
-    2 -> 1,
-    3 -> 2,
-    3 -> 1,
-    4 -> 3,
-    5 -> 2,
-    5 -> 6,
-    6 -> 3
+  val b: LogicalParGraph[(Int, PartId), UTuple] = LogicalParGraph[(Int, PartId), UTuple](
+    v1 -> v4,
+    v1 -> v5,
+    v1 -> v6,
+    v2 -> v1,
+    v3 -> v2,
+    v3 -> v1,
+    v4 -> v3,
+    v5 -> v2,
+    v5 -> v6,
+    v6 -> v3
   )
 
   import cats.syntax.traverse._
@@ -78,18 +66,18 @@ object Sandbox extends App {
   //TODO: What about a Queryable function which takes a Graph and a ParScheme. Perhaps also an implicit QueryBuilder
   //  which I could then use to prop up type inference?
 
-  def query[S[_]: ParScheme]: QueryIO[LogicalParGraph[S, ?, ?[_]], Int, UTuple, Option[(Int, Int)]] = {
+  def query: QueryIO[LogicalParGraph, (Int, PartId), UTuple, Option[((Int,PartId), (Int, PartId))]] = {
     for {
-      v <- get[LogicalParGraph[S, ?, ?[_]], Int, UTuple](1)
-      p <- v.traverse(traverseEdge[LogicalParGraph[S, ?, ?[_]], Int, UTuple](_, (1, 4)))
-      _ <- traverseEdge[LogicalParGraph[S, ?, ?[_]], Int, UTuple](4, (4, 3))
+      v <- get[LogicalParGraph, (Int, PartId), UTuple](v1)
+      p <- v.traverse(traverseEdge[LogicalParGraph, (Int, PartId), UTuple](_, (v1, v4)))
+//      _ <- traverseEdge[LogicalParGraph, (Int, PartId), UTuple](v4, (v4, v3))
     } yield p.flatten
   }
 
   import org.gdget.loom.experimental._
 
-  val interpreter = countingInterpreterK[Future, Scheme, Int, UTuple]
-  val result = query[Scheme].transKWith[Future](interpreter).run(b)
+  val interpreter = countingInterpreterK[Future, (Int, PartId), UTuple]
+  val result = query.transKWith[Future](interpreter).run(b)
   result.onSuccess {
     case Some(edge) => println(s"Result is: $edge and took ${interpreter.iptCount} traversals to evaluate.")
     case None => println(s"The query returns nothing and took ${interpreter.iptCount} traversals to evaluate.")

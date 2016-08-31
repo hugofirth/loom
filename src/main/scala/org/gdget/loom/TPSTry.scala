@@ -43,7 +43,7 @@ import scala.collection.mutable.ArrayBuffer
 final class TPSTry[G[_, _[_]], V, E[_]] private (val root: TPSTryNode[G, V, E]) {
 
   /** Public interface to TPSTryNode's add method. Adds all subgraphs of the provided graph as Nodes in the TPSTry */
-  def add(graph: G[V, E])(implicit gEv: Graph[G], eEv: Edge[E], vEv: Signature[V]) = root.add(graph)
+  def add(graph: G[V, E])(implicit gEv: Graph[G, V, E], eEv: Edge[E], vEv: Labelled[V]) = root.add(graph)
 
   /** Get TPSTry Node which has signature x and return it. */
 
@@ -56,9 +56,13 @@ final class TPSTry[G[_, _[_]], V, E[_]] private (val root: TPSTryNode[G, V, E]) 
 
 object TPSTry {
 
-  def apply[G[_, _[_]]: Graph, V: Signature, E[_]: Edge](graph: G[V, E]) = new TPSTry[G, V, E](TPSTryNode(graph))
+  def apply[G[_, _[_]], V, E[_]](graph: G[V, E])(implicit gEv: Graph[G, V, E],
+                                                 vEv: Labelled[V],
+                                                 eEv: Edge[E]) = new TPSTry[G, V, E](TPSTryNode(graph))
 
-  def empty[G[_, _[_]]: Graph, V: Signature, E[_]: Edge] = new TPSTry[G, V, E](TPSTryNode.empty[G, V, E])
+  def empty[G[_, _[_]], V, E[_]](implicit gEv: Graph[G, V, E],
+                                 vEv: Labelled[V],
+                                 eEv: Edge[E])  = new TPSTry[G, V, E](TPSTryNode.empty[G, V, E])
 }
 
 
@@ -100,8 +104,8 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
   /** Return the graph associated with this TPSTry node, if it exists. This creates a default graph instance for the type
     * G from an internal representation of a set of edges
     */
-  def graphOption(implicit gEv: Graph[G], eEv: Edge[E]): Option[G[V, E]] =
-    repr.headOption.map(Graph[G].point(_)).map(g => Graph[G].plusEdges(g, repr.tail.toList:_*))
+  def graphOption(implicit gEv: Graph[G, V, E], eEv: Edge[E]): Option[G[V, E]] =
+    repr.headOption.map(Graph[G, V, E].point(_)).map(g => Graph[G, V, E].plusEdges(g, repr.tail.toList:_*))
 
   /** A simple counter of how many times the graph represented by this node has been added to the TPSTry */
   def support: Int
@@ -130,14 +134,14 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
     *
     * The add function implements the "weave" algorithm described by me in (http://ceur-ws.org/Vol-1558/paper26.pdf).
     */
-  private[loom] def add(graph: G[V, E])(implicit gEv: Graph[G], eEv: Edge[E], sEv: Signature[V]) = {
+  private[loom] def add(graph: G[V, E])(implicit gEv: Graph[G, V, E], eEv: Edge[E], sEv: Labelled[V]) = {
 
     def corecurse(parent: TPSTryNode[G, V, E], es: Set[E[V]], depth: Int, sigs: SigTable[G, V, E]): TPSTryNode[G, V, E] = {
 
       //Get set of vertices from set of neighbours
       val vs = es.map(Edge[E].left) ++ es.map(Edge[E].right)
       //Get the set of all edges incident to es, including es
-      val neighbourhoods = vs.flatMap(Graph[G].neighbourhood(graph, _))
+      val neighbourhoods = vs.flatMap(Graph[G, V, E].neighbourhood(graph, _))
       //Remove es to get the set of edges which are incident to es but not *in* es
       val ns = neighbourhoods.flatMap(_.edges) &~ es
       //Fold Left over each indicent edge en
@@ -146,7 +150,7 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
         if(sigs.size < depth) sigs(depth) = mutable.HashMap.empty[BigInt, NodeBuilder[G, V, E]]
         // Calculate factor of en
         val (l, r) = Edge[E].vertices(en)
-        val factor = Signature[V].signature(l) - Signature[V].signature(r)
+        val factor = Labelled[V].label(l) - Labelled[V].label(r)
         val enSig = factor * p.signature
         //create a builder if one is not found in sigTable
         val b = (sigs(depth).get(enSig), p.children.get(factor)) match {
@@ -169,7 +173,9 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
     //Recurse, remove support, if support is 0 remove node and stop recursing. Any time we change support, (or remove a node?), we replace with a builder
     // and put the builder in a sigTable which we carry along with us.
 
-    val edges = Graph[G].edges(graph)
+
+    //TODO: Fix for depth 0/1, never actually adds single edges to the trie
+    val edges = Graph[G, V, E].edges(graph)
     val sigTable = mutable.ArrayBuffer.empty[mutable.HashMap[BigInt, NodeBuilder[G, V, E]]]
     edges.foldLeft(this) { (trie, edge) =>
       corecurse(trie, Set(edge), 0, sigTable)
@@ -190,10 +196,14 @@ object TPSTryNode {
   type SigTable[G[_, _[_]], V, E[_]] = mutable.ArrayBuffer[mutable.HashMap[BigInt, NodeBuilder[G, V, E]]]
 
   /** The empty TPSTry, essentially a root node with no children */
-  def empty[G[_, _[_]], V, E[_]] = Root[G, V, E]()
+  def empty[G[_, _[_]], V, E[_]](implicit gEv: Graph[G, V, E],
+                                                 vEv: Labelled[V],
+                                                 eEv: Edge[E]) = Root[G, V, E]()
 
   /** apply method for building TPSTry++ from provided graph */
-  def apply[G[_, _[_]]: Graph, V: Signature, E[_]: Edge](g: G[V, E]): TPSTryNode[G, V, E] = Root[G, V, E]().add(g)
+  def apply[G[_, _[_]], V, E[_]](g: G[V, E])(implicit gEv: Graph[G, V, E],
+                                                 vEv: Labelled[V],
+                                                 eEv: Edge[E]): TPSTryNode[G, V, E] = Root[G, V, E]().add(g)
 
   private[loom] case class Node[G[_, _[_]], V, E[_]](repr: Set[E[V]],
                                                      support: Int,

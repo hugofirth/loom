@@ -30,19 +30,19 @@ import org.apache.commons.math3.random.{JDKRandomGenerator, RandomDataGenerator}
  /** Experiment trait to hold implementation common to all experiments (e.g. IO).
    *
    */
-sealed trait Experiment[S[_], V, E[_]] {
+sealed trait Experiment[V, E[_]] {
 
   /** Type Aliases for conciceness and clarity */
   //Note that queries needn't return a list of edges, but as we need a fixed return type this seems the most flexible?
-  type Q = QueryIO[LogicalParGraph[S, ?, ?[_]], V, E, List[E[V]]]
+  type Q = QueryIO[LogicalParGraph, V, E, List[E[V]]]
   type QStream = Stream[Q]
 
-  /** Typeclass instances for S & E */
-  implicit def S: ParScheme[S]
+  /** Typeclass instances for V & E */
   implicit def E: Edge[E]
+  implicit def V: Partitioned[V]
 
   /** The graph over which the experiments are run */
-  def g: LogicalParGraph[S, V, E]
+  def g: LogicalParGraph[V, E]
 
   /** Map of query idenifiers to queries themselves (QueryIO objects) */
   def queries: Map[String, Q]
@@ -89,7 +89,7 @@ sealed trait Experiment[S[_], V, E[_]] {
     *
     * TODO: use cats.Eval here
     */
-  def time[A](f: LogicalParGraph[S, V, E] => A): LogicalParGraph[S, V, E] => (Long, A) = { g =>
+  def time[A](f: LogicalParGraph[V, E] => A): LogicalParGraph[V, E] => (Long, A) = { g =>
     val t = System.nanoTime
     ((System.nanoTime-t)/1000, f(g))
   }
@@ -108,7 +108,7 @@ sealed trait Experiment[S[_], V, E[_]] {
 
     val resultStream = queryStream(435627192).take(n).map { q =>
       val timedQ = time { graph =>     
-        val interpreter = countingInterpreterK[Future, S, V, E]
+        val interpreter = countingInterpreterK[Future, V, E]
         val query = q.transKWith[Future](interpreter).run(graph)
         //May seem weird to map the Future then not use the query result, but map is run against the *successful* result
         // of the future, therefore when the map function is executed, the mutable interpreter's iptCount is guaranteed
@@ -134,8 +134,8 @@ object Experiment {
   }
 }
 
-case class MusicBrainzExperiment[S[_], V, E[_]](g: LogicalParGraph[S, V, E])(implicit val S: ParScheme[S], val E: Edge[E])
-  extends Experiment[S, V, E] {
+case class MusicBrainzExperiment[V, E[_]](g: LogicalParGraph[V, E])(implicit val V: Partitioned[V], val E: Edge[E])
+  extends Experiment[V, E] {
 
   val q1 = ???
 

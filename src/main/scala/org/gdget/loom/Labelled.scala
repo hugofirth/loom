@@ -21,9 +21,9 @@ import cats.data.NonEmptyList
 
 import scala.annotation.implicitNotFound
 
-/** Simple typeclass which requires implementing types to associate an Int "signature" with instances.
+/** Simple typeclass which requires implementing types to associate an Int "label" with instances.
   *
-  * The intended use case of this typeclass is to associate distinct Int signatures with the subtypes of a Vertex type
+  * The intended use case of this typeclass is to associate distinct Int labels with the subtypes of a Vertex type
   * in a graph. E.g:
   *
   * {{{
@@ -33,9 +33,9 @@ import scala.annotation.implicitNotFound
   * case class C(...) extends MyVertex // => 2
   *
   * object MyVertex {
-  *   implicit val myVertexSignature = new Signature[MyVertex] {
+  *   implicit val myVertexlabel = new Label[MyVertex] {
   *
-  *     def signature(v: MyVertex) = v match {
+  *     def label(v: MyVertex) = v match {
   *       case A(...) => 1
   *       case B(...) => 7
   *       case C(...) => 2
@@ -44,16 +44,16 @@ import scala.annotation.implicitNotFound
   * }
   * }}}
   */
-@implicitNotFound("No member of type class Signature found for type ${A}")
-trait Signature[A] {
+@implicitNotFound("No member of type class Labelled found for type ${A}")
+trait Labelled[A] {
 
-  def signature(a: A): Int
+  def label(a: A): Int
 
 }
 
-object Signature {
+object Labelled {
 
-  @inline def apply[A: Signature]: Signature[A] = implicitly[Signature[A]]
+  @inline def apply[A: Labelled]: Labelled[A] = implicitly[Labelled[A]]
 
 }
 
