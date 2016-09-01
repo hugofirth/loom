@@ -18,31 +18,33 @@ package org.gdget.loom.experimental
   */
 
 import org.gdget.Edge
+import org.gdget.data.UNeighbourhood
 
 import language.higherKinds
 import org.gdget.partitioned._
 
 /** The LDG streaming graph partitioner described by Stanton & Kliot (http://dl.acm.org/citation.cfm?id=2339722) */
-case class LDGPartitioner[V: Partitioned](capacity: Int, pSizes: Map[PartId, Int], k: Int, unassigned: Map[V, List[V]]) {
+case class LDGPartitioner[G[_, _[_]], V, E[_]](capacity: Int, pSizes: Map[PartId, Int], k: Int)
+                                              (implicit gEv: ParGraph[G, V, E], vEv: Partitioned[V], eEv: Edge[E]) {
 
 
-  def partitionOf[G[_, _[_]], E[_]](vertex: V, g: G[V, E])(implicit gEv: ParGraph[G, V, E], eEv: Edge[E]): PartId = {
-    //Get the neighbourhood of vertex
-    //Check if the neighbours are assigned yet (are in g) and not just to the temp partition
-    //TODO: work out exactly how the temp partition (-1) is going to work.
-    val neighbours = ParGraph[G, V, E].neighbourhood(g, vertex).fold(Set.empty[V])(_.neighbours)
+  def partitionOf(n: UNeighbourhood[V, E], g: G[V, E]): Option[PartId] = {
+
+    //Check if the neighbours of a vertex v are assigned yet (are in g)
+    //NOTE!!!!! The below only works if our vertices obey the partId != equality law
+    val existingNeighbours = ParGraph[G, V, E].findVertices(g)(n.neighbours.contains).toList
     val neighbourPartitions = for {
-      n <- neighbours
-      part <- ParGraph[G, V, E].partitionOf(g, n) if part != (-1).part
+      n <- existingNeighbours
+      part <- Partitioned[V].partition(n)
     } yield (n, part)
     val partitionCounts = neighbourPartitions.groupBy(_._2).mapValues(_.size.toDouble)
-    //Function to adjust partition counts to maintain balance and find the biggest scoring partition
-    partitionCounts.reduceLeft{ (highScore, current) =>
+    //Adjust partition counts to maintain balance and find the biggest scoring partition
+    partitionCounts.reduceLeftOption { (highScore, current) =>
       //Get the score of the current partition
       val pScore = pSizes.get(current._1).fold(0D) { s => current._2 * (1 - (s / capacity)) }
       //Check if it is greater than the current highscore, then carry greatest scoring partition forward
       if(pScore > highScore._2) current else highScore
-    }._1
+    }.map(_._1)
   }
 
 }
@@ -54,12 +56,23 @@ case class FennelPartitioner(a: Int) {
 
 }
 
+
+
 object Partitioners extends LDGPartitionerInstances with FennelPartitionerInstances {
 
 }
 
 sealed trait LDGPartitionerInstances {
 
+  implicit def lDGPartitioner[G[_, _[_]], V, E[_]](implicit gEv: ParGraph[G, V, E], vEv: Partitioned[V], eEv: Edge[E]) =
+    new Partitioner[LDGPartitioner[G, V, E], (G[V, E], UNeighbourhood[V, E])] {
+
+      override def partition(partitioner: LDGPartitioner[G, V, E],
+                             input: (G[V, E], UNeighbourhood[V, E])): (LDGPartitioner[G, V, E], Option[PartId]) = {
+
+        (partitioner, partitioner.partitionOf(input._2, input._1))
+      }
+    }
 
 }
 

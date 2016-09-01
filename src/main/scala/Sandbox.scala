@@ -20,6 +20,7 @@ import cats.data.WriterT
 import cats.functor.Bifunctor
 import org.gdget.partitioned._
 import org.gdget.data.query._
+import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, ProvGenVertex}
 import org.gdget.{Edge, Graph}
 import org.gdget.std.all._
 
@@ -49,9 +50,23 @@ object Sandbox extends App {
     v6 -> v3
   )
 
+  val (p1,p2,p3,p4,p5) = (Entity(1, Option(1.part)),
+                          Entity(2, Option(1.part)),
+                          Activity(3, Option(2.part)),
+                          Agent(4, Option(2.part)),
+                          Activity(5, Option(2.part)))
+
+  val c = LogicalParGraph[ProvGenVertex, UTuple](
+    p1 -> p2,
+    p1 -> p3,
+    p3 -> p2,
+    p3 -> p4,
+    p2 -> p5
+  )
+
   import cats.syntax.traverse._
   import cats._
-  import cats.std.all._
+  import cats.instances.all._
   import ExecutionContext.Implicits.global
   import LogicalParGraph._
 
@@ -70,9 +85,28 @@ object Sandbox extends App {
     for {
       v <- get[LogicalParGraph, (Int, PartId), UTuple](v1)
       p <- v.traverse(traverseEdge[LogicalParGraph, (Int, PartId), UTuple](_, (v1, v4)))
-//      _ <- traverseEdge[LogicalParGraph, (Int, PartId), UTuple](v4, (v4, v3))
+      _ <- traverseEdge[LogicalParGraph, (Int, PartId), UTuple](v4, (v4, v3))
     } yield p.flatten
   }
+
+  def query2: QueryIO[LogicalParGraph, ProvGenVertex, UTuple, List[List[ProvGenVertex]]] = for {
+      as <- getWhere[LogicalParGraph, ProvGenVertex, UTuple] {
+        case Activity(_, _) => true
+        case _ => false
+      }
+      es <- as.traverse(traverseNeighboursWhere[LogicalParGraph, ProvGenVertex, UTuple](_, {
+        case Entity(_, _) => true
+        case _ => false
+      }))
+      e <- where[LogicalParGraph, ProvGenVertex, UTuple, List, List[ProvGenVertex]](es, _.size > 1)
+    } yield e
+
+
+
+
+  val otherResult = query2.transK[Id].run(c)
+
+  println(otherResult)
 
   import org.gdget.loom.experimental._
 

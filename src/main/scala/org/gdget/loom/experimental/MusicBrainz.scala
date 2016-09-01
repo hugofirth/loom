@@ -1,0 +1,40 @@
+/** loom
+  *
+  * Copyright (c) 2016 Hugo Firth
+  * Email: <me@hugofirth.com/>
+  *
+  * Licensed under the Apache License, Version 2.0 (the "License");
+  * you may not use this file except in compliance with the License.
+  * You may obtain a copy of the License at:
+  *
+  * http://www.apache.org/licenses/LICENSE-2.0
+  *
+  * Unless required by applicable law or agreed to in writing, software
+  * distributed under the License is distributed on an "AS IS" BASIS,
+  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+package org.gdget.loom.experimental
+
+import org.gdget.Edge
+import org.gdget.partitioned.{LogicalParGraph, Partitioned}
+
+import language.higherKinds
+
+/** Description of Class
+  *
+  * @author hugofirth
+  */
+case class MusicBrainzExperiment[V, E[_]](g: LogicalParGraph[V, E])(implicit val V: Partitioned[V], val E: Edge[E])
+  extends Experiment[V, E] {
+
+  val q1 = ???
+
+  val q2 = ???
+
+  val q3 = ???
+
+  /** Map of query idenifiers to queries themselves (QueryIO objects) */
+  override def queries: Map[String, Q] = ???
+}

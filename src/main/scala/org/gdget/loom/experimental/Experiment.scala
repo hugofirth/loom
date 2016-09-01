@@ -23,14 +23,14 @@ import org.gdget.data.query._
 import org.gdget.Edge
 import org.gdget.partitioned._
 import cats._
-import cats.std.all._
+import cats.instances.all._
 import cats.syntax.semigroup._
 import org.apache.commons.math3.random.{JDKRandomGenerator, RandomDataGenerator}
 
  /** Experiment trait to hold implementation common to all experiments (e.g. IO).
    *
    */
-sealed trait Experiment[V, E[_]] {
+trait Experiment[V, E[_]] {
 
   /** Type Aliases for conciceness and clarity */
   //Note that queries needn't return a list of edges, but as we need a fixed return type this seems the most flexible?
@@ -49,9 +49,11 @@ sealed trait Experiment[V, E[_]] {
 
   /** Stream of queries made up from the values from `queries`.
     * 
-    * The frequency of each distinct query pattern may change over time.
+    * The relative frequency of each distinct query pattern changes over time in a periodic, repeating fashion which
+    * simulates a pseudo-realistic pattern of workload change. If you plot the frequencies of a given query over time it
+    * will resemble a sine wave.
     */
-  def queryStream(seed: Int): QStream = {
+  def periodicQueryStream(seed: Int): QStream = {
     def selectRange(ranges: Vector[(String, Double, Double)], offset: Double, value: Double) = {
       //Make sure offset is < 7
       val effectiveOffset = offset % 7
@@ -84,6 +86,14 @@ sealed trait Experiment[V, E[_]] {
     offsets.flatMap(o => selectRange(ranges, o, rng.nextGaussian(0, 1))).flatMap(queries.get)
   }
 
+
+  /** Stream of queries made up from the values from `queries`.
+    *
+    * The relative frequencies of each distinct query are fixed according to the map of query identifiers to doubles passed
+    * in as a method parameter
+    */
+   def fixedQueryStream(seed: Int, frequencies: Map[String, Double]): QStream = { ??? }
+
   /** Takes any function from a graph to a return type A, and lazily measures the execution
     * time in milliseconds, returning a function from a graph to a tuple (Long, A).
     *
@@ -101,12 +111,12 @@ sealed trait Experiment[V, E[_]] {
     * As queries in the workload are read only, individual queries may be evaluated in their own threads. The Future
     * result of each is then combined and returned as Future[A: Monoid] has a Monoid.
     */ 
-  def run(n: Int): Future[Experiment.Result] = {
+  def run(n: Int, qs: QStream): Future[Experiment.Result] = {
     import ExecutionContext.Implicits.global
     import Experiment._
     import LogicalParGraph._
 
-    val resultStream = queryStream(435627192).take(n).map { q =>
+    val resultStream = qs.take(n).map { q =>
       val timedQ = time { graph =>     
         val interpreter = countingInterpreterK[Future, V, E]
         val query = q.transKWith[Future](interpreter).run(graph)
@@ -134,17 +144,5 @@ object Experiment {
   }
 }
 
-case class MusicBrainzExperiment[V, E[_]](g: LogicalParGraph[V, E])(implicit val V: Partitioned[V], val E: Edge[E])
-  extends Experiment[V, E] {
-
-  val q1 = ???
-
-  val q2 = ???
-
-  val q3 = ???
-
-  /** Map of query idenifiers to queries themselves (QueryIO objects) */
-  override def queries: Map[String, Q] = ???
-}
 
 
