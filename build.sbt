@@ -13,7 +13,9 @@ libraryDependencies ++= Seq(
   "org.typelevel" %% "cats" % "0.7.0",
   "org.gdget" %% "core" % "0.1",
   "org.gdget" %% "partitioned" % "0.1",
-  "org.apache.commons" % "commons-math3" % "3.6.1"
+  "org.apache.commons" % "commons-math3" % "3.6.1",
+  "org.spire-math" %% "jawn-parser" % "0.9.0",
+  "org.spire-math" %% "jawn-ast" % "0.9.0"
 )
 
 addCompilerPlugin("org.spire-math" %% "kind-projector" % "0.8.0")

@@ -23,10 +23,13 @@ import org.gdget.data.UNeighbourhood
 import language.higherKinds
 import org.gdget.partitioned._
 
+
 /** The LDG streaming graph partitioner described by Stanton & Kliot (http://dl.acm.org/citation.cfm?id=2339722) */
 case class LDGPartitioner[G[_, _[_]], V, E[_]](capacity: Int, pSizes: Map[PartId, Int], k: Int)
                                               (implicit gEv: ParGraph[G, V, E], vEv: Partitioned[V], eEv: Edge[E]) {
 
+  //Note: Not carrying state properly. Need to pass graph to constructor and add to it as we partition vertices.
+  //This is a slightly bizarre design choice looking back on it, as if we immediately read the resulting stream of
 
   def partitionOf(n: UNeighbourhood[V, E], g: G[V, E]): Option[PartId] = {
 

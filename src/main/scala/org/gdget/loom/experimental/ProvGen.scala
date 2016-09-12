@@ -18,27 +18,27 @@
 package org.gdget.loom.experimental
 
 import cats.{Eq, Show}
+import org.gdget.HPair
+import org.gdget.loom.experimental.Experiment.Q
 import org.gdget.partitioned._
 
 
 
 object ProvGen {
 
-
-
   /** ADT for ProvGen vertices
     *
     * @author hugofirth
     */
-  sealed trait ProvGenVertex {
+  sealed trait Vertex {
     def id: Int
 
     def part: Option[PartId]
 
-    def canEqual(other: Any): Boolean = other.isInstanceOf[ProvGenVertex]
+    def canEqual(other: Any): Boolean = other.isInstanceOf[Vertex]
 
     override def equals(other: Any): Boolean = other match {
-      case that: ProvGenVertex =>
+      case that: Vertex =>
         (that canEqual this) &&
           id == that.id
       case _ => false
@@ -51,27 +51,33 @@ object ProvGen {
 
   }
 
-  case class Agent(id: Int, part: Option[PartId]) extends ProvGenVertex
+  case class Agent(id: Int, part: Option[PartId]) extends Vertex
 
-  case class Activity(id: Int, part: Option[PartId]) extends ProvGenVertex
+  case class Activity(id: Int, part: Option[PartId]) extends Vertex
 
-  case class Entity(id: Int, part: Option[PartId]) extends ProvGenVertex
+  case class Entity(id: Int, part: Option[PartId]) extends Vertex
 
-  object ProvGenVertex {
+  object Vertex {
 
     /** ProvGenVertex typeclass instances */
 
-    implicit val pGVPartitioned = new Partitioned[ProvGenVertex] {
-      override def partition(v: ProvGenVertex): Option[PartId] = v.part
+    implicit val pGVPartitioned = new Partitioned[Vertex] {
+      override def partition(v: Vertex): Option[PartId] = v.part
     }
 
-    implicit val pGVShow = new Show[ProvGenVertex] {
-      override def show(f: ProvGenVertex): String = f.toString
+    implicit val pGVShow = new Show[Vertex] {
+      override def show(f: Vertex): String = f.toString
     }
 
-    implicit val pGVEq = new Eq[ProvGenVertex] {
-      override def eqv(x: ProvGenVertex, y: ProvGenVertex): Boolean = x.equals(y)
+    implicit val pGVEq = new Eq[Vertex] {
+      override def eqv(x: Vertex, y: Vertex): Boolean = x.equals(y)
     }
+  }
+
+  /** Trait containing information needed for running ProvGen experiments, including graph location and queries */
+  trait ProvGenExperimentMeta extends ExperimentMeta[Vertex, HPair] { self: Experiment[Vertex, HPair] =>
+
+    override def queries: Map[String, Q[Vertex, HPair]] = ???
   }
 
 }

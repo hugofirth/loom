@@ -23,5 +23,13 @@ package org.gdget.loom
   */
 object Main extends App {
 
+  //Would be cool to make this a CLI app with a couple of input modes:
+  // Kafka connector? Connector for some other MQs?
+  // Read in from a file?
+  // Start as a REST service which accepts PUT requests for new edges
+
+  //As for output modes?
+
+  //All this streaming in/out probably needs one of Akka, Monix or FS2
 
 }

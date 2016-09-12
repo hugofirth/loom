@@ -20,22 +20,22 @@ package org.gdget.loom.experimental
 import language.higherKinds
 import scala.concurrent._
 import org.gdget.data.query._
-import org.gdget.Edge
+import org.gdget.{Edge, HPair}
 import org.gdget.partitioned._
+import org.gdget.loom.experimental.ProvGen.{ProvGenExperimentMeta, Vertex => ProvGenVertex}
 import cats._
 import cats.instances.all._
 import cats.syntax.semigroup._
 import org.apache.commons.math3.random.{JDKRandomGenerator, RandomDataGenerator}
 
+
  /** Experiment trait to hold implementation common to all experiments (e.g. IO).
    *
    */
-trait Experiment[V, E[_]] {
+sealed trait Experiment[V, E[_]] {
 
-  /** Type Aliases for conciceness and clarity */
-  //Note that queries needn't return a list of edges, but as we need a fixed return type this seems the most flexible?
-  type Q = QueryIO[LogicalParGraph, V, E, List[E[V]]]
-  type QStream = Stream[Q]
+
+  import Experiment._
 
   /** Typeclass instances for V & E */
   implicit def E: Edge[E]
@@ -45,7 +45,7 @@ trait Experiment[V, E[_]] {
   def g: LogicalParGraph[V, E]
 
   /** Map of query idenifiers to queries themselves (QueryIO objects) */
-  def queries: Map[String, Q]
+  def queries: Map[String, Q[V, E]]
 
   /** Stream of queries made up from the values from `queries`.
     * 
@@ -53,7 +53,7 @@ trait Experiment[V, E[_]] {
     * simulates a pseudo-realistic pattern of workload change. If you plot the frequencies of a given query over time it
     * will resemble a sine wave.
     */
-  def periodicQueryStream(seed: Int): QStream = {
+  def periodicQueryStream(seed: Int): QStream[V, E] = {
     def selectRange(ranges: Vector[(String, Double, Double)], offset: Double, value: Double) = {
       //Make sure offset is < 7
       val effectiveOffset = offset % 7
@@ -91,8 +91,10 @@ trait Experiment[V, E[_]] {
     *
     * The relative frequencies of each distinct query are fixed according to the map of query identifiers to doubles passed
     * in as a method parameter
+    *
+    * TODO: Fix this!
     */
-   def fixedQueryStream(seed: Int, frequencies: Map[String, Double]): QStream = { ??? }
+   def fixedQueryStream(seed: Int, frequencies: Map[String, Double]): QStream[V, E] = { ??? }
 
   /** Takes any function from a graph to a return type A, and lazily measures the execution
     * time in milliseconds, returning a function from a graph to a tuple (Long, A).
@@ -111,7 +113,7 @@ trait Experiment[V, E[_]] {
     * As queries in the workload are read only, individual queries may be evaluated in their own threads. The Future
     * result of each is then combined and returned as Future[A: Monoid] has a Monoid.
     */ 
-  def run(n: Int, qs: QStream): Future[Experiment.Result] = {
+  def run(n: Int, qs: QStream[V, E]): Future[Experiment.Result] = {
     import ExecutionContext.Implicits.global
     import Experiment._
     import LogicalParGraph._
@@ -133,16 +135,47 @@ trait Experiment[V, E[_]] {
 }
 
 object Experiment {
-  //Result case class, which takes Time and IPT at a minimum
+
+  /** Type Aliases for conciceness and clarity */
+  //Note that queries needn't return a list of edges, but as we need a fixed return type this seems the most flexible?
+  type Q[V, E[_]] = QueryIO[LogicalParGraph, V, E, List[E[V]]]
+  type QStream[V, E[_]] = Stream[Q[V, E]]
+
+  /** Result case class, which takes Time and IPT at a minimum */
   case class Result(time: Long, ipt: Int)
 
-  //Monoid for Result case class
+  /** Monoid for Result case class */
   implicit val resultMonoid: Monoid[Result] = new Monoid[Result] {
     override def empty: Result = Result(0, 0)
 
     override def combine(x: Result, y: Result): Result = x.copy(time = x.time+y.time, ipt = x.ipt+y.ipt)
   }
+
+  /** Types in the Experiment ADT */
+  case class ProvGenExperiment(g: LogicalParGraph[ProvGenVertex, HPair]) extends Experiment[ProvGenVertex, HPair] with
+    ProvGenExperimentMeta {
+    /** Typeclass instances for V & E */
+    override implicit def E: Edge[HPair] = Edge[HPair]
+
+    override implicit def V: Partitioned[ProvGenVertex] = Partitioned[ProvGenVertex]
+  }
+
+  //case object MusicBrainzExperiment
+  //case object DBLPExperiment
+  //case object DBPediaExperiment
 }
 
+
+/** Utility trait to be extended for each experiment to provide a "Meta" trait which carries all experiment info (like
+  * dataset and workload queries) and may be mixed back into the Experiment ADT objects above.
+  */
+trait ExperimentMeta[V, E[_]] {
+
+  import Experiment._
+
+  def g: LogicalParGraph[V, E]
+
+  def queries: Map[String, Q[V, E]]
+}
 
 

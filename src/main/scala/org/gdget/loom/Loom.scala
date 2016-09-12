@@ -15,14 +15,12 @@
   * See the License for the specific language governing permissions and
   * limitations under the License.
   */
-package org.gdget.loom.experimental
+package org.gdget.loom
 
-import org.gdget.Edge
-import org.gdget.partitioned.{LogicalParGraph, Partitioned}
-
-import language.higherKinds
-
-
-object MusicBrainz {
+/** Description of Class
+  *
+  * @author hugofirth
+  */
+class Loom {
 
 }

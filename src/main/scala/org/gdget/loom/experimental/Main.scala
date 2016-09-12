@@ -17,12 +17,12 @@
   */
 package org.gdget.loom.experimental
 
-import org.gdget.Edge
-import org.gdget.partitioned.{LogicalParGraph, Partitioned}
+/** Entry point for the Loom experiments
+  *
+  * @author hugofirth
+  */
+object Main extends App {
 
-import language.higherKinds
-
-
-object MusicBrainz {
+  //Run experiments
 
 }

@@ -16,11 +16,9 @@
   * limitations under the License.
   */
 
-import cats.data.WriterT
-import cats.functor.Bifunctor
 import org.gdget.partitioned._
 import org.gdget.data.query._
-import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, ProvGenVertex}
+import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, Vertex => ProvGenVertex}
 import org.gdget.{Edge, Graph}
 import org.gdget.std.all._
 
@@ -81,25 +79,29 @@ object Sandbox extends App {
   //TODO: What about a Queryable function which takes a Graph and a ParScheme. Perhaps also an implicit QueryBuilder
   //  which I could then use to prop up type inference?
 
-  def query: QueryIO[LogicalParGraph, (Int, PartId), UTuple, Option[((Int,PartId), (Int, PartId))]] = {
+  def query = {
+    val op = QueryBuilder[LogicalParGraph, (Int, PartId), UTuple]
     for {
-      v <- get[LogicalParGraph, (Int, PartId), UTuple](v1)
-      p <- v.traverse(traverseEdge[LogicalParGraph, (Int, PartId), UTuple](_, (v1, v4)))
-      _ <- traverseEdge[LogicalParGraph, (Int, PartId), UTuple](v4, (v4, v3))
+      v <- op.get(v1)
+      p <- v.traverse(op.traverseEdge(_, (v1, v4)))
+      _ <- op.traverseEdge(v4, (v4, v3))
     } yield p.flatten
   }
 
-  def query2: QueryIO[LogicalParGraph, ProvGenVertex, UTuple, List[List[ProvGenVertex]]] = for {
-      as <- getWhere[LogicalParGraph, ProvGenVertex, UTuple] {
+  def query2 = {
+    val op = QueryBuilder[LogicalParGraph, ProvGenVertex, UTuple]
+    for {
+      as <- op.getWhere {
         case Activity(_, _) => true
         case _ => false
       }
-      es <- as.traverse(traverseNeighboursWhere[LogicalParGraph, ProvGenVertex, UTuple](_, {
+      es <- as.traverse(op.traverseNeighboursWhere(_) {
         case Entity(_, _) => true
         case _ => false
-      }))
-      e <- where[LogicalParGraph, ProvGenVertex, UTuple, List, List[ProvGenVertex]](es, _.size > 1)
+      })
+      e <- op.where(es)(_.size > 1)
     } yield e
+  }
 
 
 
