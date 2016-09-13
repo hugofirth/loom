@@ -41,6 +41,8 @@ object GraphReader {
 
   //Spit into LogicalParGraph - how efficient is constructor? Use internal buffer?
 
+  //TODO: Switch to using Xor
+
   def read[B](path: String, toInput: JValue => B): Either[ParseException, Stream[B]] = {
     //Load the file lazily given path
     val input = Paths.get(path)

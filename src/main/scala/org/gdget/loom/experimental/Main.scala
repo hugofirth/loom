@@ -22,11 +22,13 @@ import java.nio.file.Paths
 import cats.data.Xor
 import cats.instances.all._
 import cats._
+import cats.syntax.all._
 import jawn.ast.JValue
-import org.gdget.Edge
+import org.gdget.{Edge, HPair}
 import org.gdget.data.UNeighbourhood
 import org.gdget.loom.GraphReader
-import org.gdget.loom.experimental.ProvGen.{Agent, Activity, Entity, Vertex => ProvGenVertex}
+import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, Vertex => ProvGenVertex}
+import org.gdget.std.all._
 
 import scala.language.higherKinds
 
@@ -43,40 +45,71 @@ object Main {
 
   }
 
-  def jsonToNeighbourhood[V, E[_]: Edge](jValue: JValue): String Xor UNeighbourhood[V, E] = {
+  //TODO: Abstract away from ProvGen
+  def jsonToNeighbourhood(jValue: JValue): String Xor UNeighbourhood[ProvGenVertex, HPair] = {
 
-    val getId = (j: JValue) => j.get("id").getLong
-      .fold(Xor.left[String, Long]("Unable to properly parse vertex id"))(Xor.right[String, Long])
+    sealed trait Direction
+    case object In extends Direction
+    case object Out extends Direction
 
-    val getV = (j: JValue, id: Int) => j.get("label").getString
-      .fold(Xor.left[String, ProvGenVertex]("Unable to properly parse vertex label")) {
+    def getId(j: JValue) = {
+      val idOpt = j.get("id").getLong
+      idOpt.fold(Xor.left[String, Long]("Unable to properly parse vertex id")) { Xor.right[String, Long] }
+    }
+
+    def getCenter(j: JValue, id: Int) = {
+      val lblOpt = j.get("label").getString
+      lblOpt.fold(Xor.left[String, ProvGenVertex]("Unable to properly parse vertex label")) {
         case "AGENT" => Xor.right[String, ProvGenVertex](Agent(id, None))
+        case "ACTIVITY" => Xor.right[String, ProvGenVertex](Activity(id, None))
+        case "ENTITY" => Xor.right[String, ProvGenVertex](Entity(id, None))
         case other => Xor.left[String, ProvGenVertex](s"Unrecognised vertex label $other")
       }
+    }
+
+    def getNeighbour(j: JValue, d: Direction) = {
+      val neighbourId = getId(j)
+      neighbourId.flatMap {id =>
+        val lblOpt = j.get("label").getString
+        lblOpt.fold(Xor.left[String, ProvGenVertex]("Unable to properly parse edge label")) {
+          case "WASDERIVEDFROM" => Xor.right[String, ProvGenVertex](Entity(id.toInt, None))
+          case "WASGENERATEDBY" =>
+            Xor.right[String, ProvGenVertex](if(d == Out) Entity(id.toInt, None) else Activity(id.toInt, None))
+          case "WASASSOCIATEDWITH" =>
+            Xor.right[String, ProvGenVertex](if(d == Out) Activity(id.toInt, None) else Agent(id.toInt, None))
+          case "USED" =>
+            Xor.right[String, ProvGenVertex](if(d == Out) Activity(id.toInt, None) else Entity(id.toInt, None))
+          case other => Xor.left[String, ProvGenVertex](s"Unrecognised edge label $other")
+        }
+      }
+    }
+
+    def getNeighbours(j: JValue, d: Direction) = {
+      //Does it matter if we go toList then sequence or sequence map toList ?
+      Stream.from(0).map(j.get).takeWhile(_.nonNull).map(getNeighbour(_, d)).toList.sequence
+    }
+
     //Format of each entry in Json array: {id, label, in[{neighbourId, edgeLabel}, ...], out[{}, ...]}
 
-    val interim = for {
+    //TODO: Why are we using Set of unit rather than empty Set here?
+    for {
       id <- getId(jValue)
-      center <- getV(jValue, id.toInt)
-    } yield center
-
-    val n = UNeighbourhood()
-
+      center <- getCenter(jValue, id.toInt)
+      inN <- getNeighbours(jValue.get("in"), In)
+      outN <- getNeighbours(jValue.get("out"), Out)
+      edges = Set(())
+    } yield UNeighbourhood[ProvGenVertex, HPair](center, inN.map(_ -> edges).toMap, outN.map(_ -> edges).toMap)
 
   }
 
   def provGenExperiment(conf: Config): String = {
 
-    //ProvGen graph stream json dumps
-    val dfs = Paths.get(conf.dfs)
-    val bfs = Paths.get(conf.bfs)
-    val rand = Paths.get(conf.rand)
-    //val stoch = Paths.get(conf.stoch)
 
     //For each stream order
-    List(dfs, bfs, rand).map { order =>
+    List(conf.dfs, conf.bfs, conf.rand).map { order =>
       //Get json dump
-      GraphReader.read(order)
+      //map to right - find someway of passing fail forward in the event of a left
+      val nStream = GraphReader.read(order, jsonToNeighbourhood)
 
     }
 
