@@ -50,6 +50,9 @@ case class LDGPartitioner[G[_, _[_]], V, E[_]](capacity: Int, pSizes: Map[PartId
     }.map(_._1)
   }
 
+  //Above, how are we breaking ties? We should be assigning ties to the emptier of two parts. Walk through to make sure
+  //we're really filling out k partitioners.
+
 }
 
 
@@ -68,7 +71,7 @@ object Partitioners extends LDGPartitionerInstances with FennelPartitionerInstan
 sealed trait LDGPartitionerInstances {
 
   implicit def lDGPartitioner[G[_, _[_]], V, E[_]](implicit gEv: ParGraph[G, V, E], vEv: Partitioned[V], eEv: Edge[E]) =
-    new Partitioner[LDGPartitioner[G, V, E], (G[V, E], UNeighbourhood[V, E])] {
+    new Partitioner[LDGPartitioner[G, ?, E]] {
 
       override def partition(partitioner: LDGPartitioner[G, V, E],
                              input: (G[V, E], UNeighbourhood[V, E])): (LDGPartitioner[G, V, E], Option[PartId]) = {

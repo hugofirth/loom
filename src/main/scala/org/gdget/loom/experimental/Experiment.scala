@@ -28,6 +28,8 @@ import cats.instances.all._
 import cats.syntax.semigroup._
 import org.apache.commons.math3.random.{JDKRandomGenerator, RandomDataGenerator}
 
+import scala.util.Random
+
 
  /** Experiment trait to hold implementation common to all experiments (e.g. IO).
    *
@@ -91,10 +93,26 @@ sealed trait Experiment[V, E[_]] {
     *
     * The relative frequencies of each distinct query are fixed according to the map of query identifiers to doubles passed
     * in as a method parameter
-    *
-    * TODO: Fix this!
     */
-   def fixedQueryStream(seed: Int, frequencies: Map[String, Double]): QStream[V, E] = { ??? }
+  def fixedQueryStream(seed: Int, frequencies: Map[String, Double]): QStream[V, E] = {
+    require((frequencies.keySet &~ queries.keySet).isEmpty, "The frequencies Map must include entries for every query!")
+    require(frequencies.values.reduceLeftOption(_ + _).getOrElse(0D) > 0.99, "Frequencies must sum to ~ 1.0!")
+
+    val rand = new Random(seed)
+    val randStream = Stream.continually(rand.nextDouble())
+
+    //Calculate distinct upper bounds for each queries frequency and invert Map
+    //Eg Map("a"->0.2, "b"->0.3, "c"->0.4, "d"->0.1) becomes List(0.2->"a", 0.5->"b", 0.9->"c", 1.0->"d")
+    val freqUpBounds = frequencies.toList.foldLeft(List.empty[(String, Double)]) { (acc, elem) =>
+      val upBound = acc.headOption.map(_._2).getOrElse(0D) + elem._2
+      (elem._1, upBound) :: acc
+    }.reverse
+
+    //As the bounds are sorted in ascending order by construction, the first bound which is greater than the random Double
+    //represents the query string for that Stream element.
+    //Sweeping some assumptions under the covers with these two flatmaps - make more robust!
+    randStream.flatMap(r => freqUpBounds.find(r <= _._2)).flatMap(q => queries.get(q._1))
+  }
 
   /** Takes any function from a graph to a return type A, and lazily measures the execution
     * time in milliseconds, returning a function from a graph to a tuple (Long, A).
