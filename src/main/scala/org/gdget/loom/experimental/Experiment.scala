@@ -22,6 +22,7 @@ import scala.concurrent._
 import org.gdget.data.query._
 import org.gdget.{Edge, HPair}
 import org.gdget.partitioned._
+import org.gdget.partitioned.data._
 import org.gdget.loom.experimental.ProvGen.{ProvGenExperimentMeta, Vertex => ProvGenVertex}
 import cats._
 import cats.instances.all._

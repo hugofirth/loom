@@ -10,7 +10,7 @@ resolvers ++= Seq(Resolver.sonatypeRepo("releases"))
 
 libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "3.0.0" % "test",
-  "org.typelevel" %% "cats" % "0.7.0",
+  "org.typelevel" %% "cats" % "0.7.2",
   "org.gdget" %% "core" % "0.1",
   "org.gdget" %% "partitioned" % "0.1",
   "org.apache.commons" % "commons-math3" % "3.6.1",

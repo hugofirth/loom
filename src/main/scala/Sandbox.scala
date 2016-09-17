@@ -17,6 +17,7 @@
   */
 
 import org.gdget.partitioned._
+import org.gdget.partitioned.data._
 import org.gdget.data.query._
 import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, Vertex => ProvGenVertex}
 import org.gdget.{Edge, Graph}

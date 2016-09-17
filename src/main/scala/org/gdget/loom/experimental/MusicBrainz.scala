@@ -17,10 +17,7 @@
   */
 package org.gdget.loom.experimental
 
-import org.gdget.Edge
-import org.gdget.partitioned.{LogicalParGraph, Partitioned}
 
-import language.higherKinds
 
 
 object MusicBrainz {

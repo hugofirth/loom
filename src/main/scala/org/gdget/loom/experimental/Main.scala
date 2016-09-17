@@ -19,17 +19,19 @@ package org.gdget.loom.experimental
 
 import java.nio.file.Paths
 
-import cats.data.Xor
-import cats.instances.all._
 import cats._
-import cats.syntax.all._
+import cats.implicits._
+import jawn.ParseException
 import jawn.ast.JValue
-import org.gdget.{Edge, HPair}
+import org.gdget._
 import org.gdget.data.UNeighbourhood
 import org.gdget.loom.GraphReader
 import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, Vertex => ProvGenVertex}
+import org.gdget.partitioned.{PartId, Partitioned, Partitioner}
+import org.gdget.partitioned.data._
 import org.gdget.std.all._
 
+import scala.annotation.tailrec
 import scala.language.higherKinds
 
 /** Entry point for the Loom experiments
@@ -38,55 +40,45 @@ import scala.language.higherKinds
   */
 object Main {
 
-  case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: List[Int])
+  /** Type Aliases for clarity */
+  type ParseError = String
+  import LogicalParGraph._
+
+  private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
+                                                size: Int)
 
 
   def main(args: Array[String]): Unit = {
 
+
+
   }
 
-  //TODO: Abstract away from ProvGen
-  def jsonToNeighbourhood(jValue: JValue): String Xor UNeighbourhood[ProvGenVertex, HPair] = {
-
-    sealed trait Direction
-    case object In extends Direction
-    case object Out extends Direction
+  /** Method for parsing a JSON value to a given Vertex ADT */
+  def jsonToNeighbourhood[V: Partitioned](jValue: JValue,
+                                          eToV: (String, Int, Direction) => Either[ParseError, V],
+                                          vToV: (String, Int) => Either[ParseError, V]): Either[String, UNeighbourhood[V, HPair]] = {
 
     def getId(j: JValue) = {
       val idOpt = j.get("id").getLong
-      idOpt.fold(Xor.left[String, Long]("Unable to properly parse vertex id")) { Xor.right[String, Long] }
+      idOpt.fold(Either.left[String, Long]("Unable to properly parse vertex id"))(Either.right[String, Long])
     }
 
     def getCenter(j: JValue, id: Int) = {
       val lblOpt = j.get("label").getString
-      lblOpt.fold(Xor.left[String, ProvGenVertex]("Unable to properly parse vertex label")) {
-        case "AGENT" => Xor.right[String, ProvGenVertex](Agent(id, None))
-        case "ACTIVITY" => Xor.right[String, ProvGenVertex](Activity(id, None))
-        case "ENTITY" => Xor.right[String, ProvGenVertex](Entity(id, None))
-        case other => Xor.left[String, ProvGenVertex](s"Unrecognised vertex label $other")
-      }
+      lblOpt.fold(Either.left[String, V]("Unable to properly parse vertex label"))(vToV(_:String, id))
     }
 
     def getNeighbour(j: JValue, d: Direction) = {
       val neighbourId = getId(j)
       neighbourId.flatMap {id =>
         val lblOpt = j.get("label").getString
-        lblOpt.fold(Xor.left[String, ProvGenVertex]("Unable to properly parse edge label")) {
-          case "WASDERIVEDFROM" => Xor.right[String, ProvGenVertex](Entity(id.toInt, None))
-          case "WASGENERATEDBY" =>
-            Xor.right[String, ProvGenVertex](if(d == Out) Entity(id.toInt, None) else Activity(id.toInt, None))
-          case "WASASSOCIATEDWITH" =>
-            Xor.right[String, ProvGenVertex](if(d == Out) Activity(id.toInt, None) else Agent(id.toInt, None))
-          case "USED" =>
-            Xor.right[String, ProvGenVertex](if(d == Out) Activity(id.toInt, None) else Entity(id.toInt, None))
-          case other => Xor.left[String, ProvGenVertex](s"Unrecognised edge label $other")
-        }
+        lblOpt.fold(Either.left[String, V]("Unable to properly parse edge label"))(eToV(_:String, id.toInt, d))
       }
     }
 
     def getNeighbours(j: JValue, d: Direction) = {
-      //Does it matter if we go toList then sequence or sequence map toList ?
-      Stream.from(0).map(j.get).takeWhile(_.nonNull).map(getNeighbour(_, d)).toList.sequence
+      Stream.from(0).map(j.get).takeWhile(_.nonNull).map(getNeighbour(_, d)).sequence.map(_.toList)
     }
 
     //Format of each entry in Json array: {id, label, in[{neighbourId, edgeLabel}, ...], out[{}, ...]}
@@ -98,22 +90,93 @@ object Main {
       inN <- getNeighbours(jValue.get("in"), In)
       outN <- getNeighbours(jValue.get("out"), Out)
       edges = Set(())
-    } yield UNeighbourhood[ProvGenVertex, HPair](center, inN.map(_ -> edges).toMap, outN.map(_ -> edges).toMap)
+    } yield UNeighbourhood[V, HPair](center, inN.map(_ -> edges).toMap, outN.map(_ -> edges).toMap)
 
   }
 
+  /**  Tail recursive method to consume Neighbourhood stream and produce a LogicalParGraph */
+  @tailrec
+  def nStreamToGraph[V: Partitioned, E[_]: Edge](ns: Stream[UNeighbourhood[V, E]],
+                                                                 g: LogicalParGraph[V, E]): LogicalParGraph[V, E] = ns match {
+    case hd #:: tl =>
+      //add hd to g creating dG
+      val dG = g
+      nStreamToGraph(tl, dG)
+    case _ =>
+      //If neighbourhood stream is empty, just return the g which we already have
+      g
+  }
+
+  /** Method describes the setup and execution of the ProvGen Loom experiment */
   def provGenExperiment(conf: Config): String = {
 
+    val vToV: (String, Int) => Either[String, ProvGenVertex] = {
+      case ("AGENT", id) =>
+        Right(Agent(id, None))
+      case ("ACTIVITY", id) =>
+        Right(Activity(id, None))
+      case ("ENTITY", id) =>
+        Right(Entity(id, None))
+      case other =>
+        Left(s"Unrecognised vertex label $other")
+    }
+
+    val eToV: (String, Int, Direction) => Either[String, ProvGenVertex] = {
+      case ("WASDERIVEDFROM", id, _) =>
+        Right(Entity(id.toInt, None))
+      case ("WASGENERATEDBY", id, d) =>
+        Right(if(d == Out) Entity(id.toInt, None) else Activity(id.toInt, None))
+      case ("WASASSOCIATEDWITH", id, d) =>
+        Right(if(d == Out) Activity(id.toInt, None) else Agent(id.toInt, None))
+      case ("USED", id, d) =>
+        Right(if(d == Out) Activity(id.toInt, None) else Entity(id.toInt, None))
+      case other =>
+        Left(s"Unrecognised edge label $other")
+    }
 
     //For each stream order
     List(conf.dfs, conf.bfs, conf.rand).map { order =>
-      //Get json dump
-      //map to right - find someway of passing fail forward in the event of a left
-      val nStream = GraphReader.read(order, jsonToNeighbourhood)
+      //Get json dump = - create Stream[UNeighbourhood[ProvGenVertex, HPair]] with GraphReader
+      val nStream = GraphReader.read(order, jsonToNeighbourhood[ProvGenVertex](_: JValue, eToV, vToV))
+      //Fold in order to deal with possible parsing errors
+      nStream.fold({ e =>
+        val error = s"Error parsing json file $order on line ${e.line}: ${e.msg}"
+        System.err.println(error)
+        error
+      }, {neighbours =>
+
+        //Given Stream of neighbourhoods, for each partitioner
+        import Partitioners._
+
+        //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
+        // of the graph (conf value) as well as k (number of partitions)
+        val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
+
+        //Create an empty LogicalParGraph
+        val g = LogicalParGraph.empty[ProvGenVertex, HPair]
+
+        //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
+        // partitions to the graph at each step. This step will be very performance intensive, look at how to handle.
+        // For one, maybe it should be a tail recursive functinon instead of a fold?
+        // We need a mutable/builder based approach to making graphs
+        // This will produce a LogicalParGraph and exhaust the stream
+
+
+
+
+
+
+        //Create experiment insance with produced graph
+
+        //Run the experiment
+
+        //Results of experiment are futures, look at our choice of return type and think about this.
+
+      })
 
     }
 
-      //Get json dump - create Stream[UNeighbourhood[ProvGenVertex, HPair]] with GraphReader
+      //Get json dump -
 
       //In order to to do ^^ we will need to define a function which takes a JValue for each elem of the adjList JSon
       // and returns parses it to return a Uneighbourhood
@@ -131,7 +194,6 @@ object Main {
     //Once we have done this for all combos, return string.
 
     //May need another method for Loom to easily manage multiple window sizes in experiments
-    //May also need to take some kind of config parameter into method for number of partitions.
 
 
     ???

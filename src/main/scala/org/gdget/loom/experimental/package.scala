@@ -23,6 +23,7 @@ import cats.{Monad, RecursiveTailRecM, ~>}
 import org.gdget.{Edge, Graph}
 import org.gdget.data.query._
 import org.gdget.partitioned._
+import org.gdget.partitioned.data._
 
 /** Package object containing type definitions and helper functions used throughout the experiments of the LOOM system.
   *

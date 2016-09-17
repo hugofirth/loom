@@ -25,13 +25,13 @@ import org.gdget.partitioned._
 
 
 /** The LDG streaming graph partitioner described by Stanton & Kliot (http://dl.acm.org/citation.cfm?id=2339722) */
-case class LDGPartitioner[G[_, _[_]], V, E[_]](capacity: Int, pSizes: Map[PartId, Int], k: Int)
-                                              (implicit gEv: ParGraph[G, V, E], vEv: Partitioned[V], eEv: Edge[E]) {
+case class LDGPartitioner(capacity: Int, pSizes: Map[PartId, Int], k: Int) {
 
   //Note: Not carrying state properly. Need to pass graph to constructor and add to it as we partition vertices.
   //This is a slightly bizarre design choice looking back on it, as if we immediately read the resulting stream of
 
-  def partitionOf(n: UNeighbourhood[V, E], g: G[V, E]): Option[PartId] = {
+  def partitionOf[G[_, _[_]], V: Partitioned, E[_]: Edge](n: UNeighbourhood[V, E],
+                                                          g: G[V, E])(implicit gEv: ParGraph[G, V, E]): Option[PartId] = {
 
     //Check if the neighbours of a vertex v are assigned yet (are in g)
     //NOTE!!!!! The below only works if our vertices obey the partId != equality law
@@ -50,7 +50,7 @@ case class LDGPartitioner[G[_, _[_]], V, E[_]](capacity: Int, pSizes: Map[PartId
     }.map(_._1)
   }
 
-  //Above, how are we breaking ties? We should be assigning ties to the emptier of two parts. Walk through to make sure
+  //TODO: Above, how are we breaking ties? We should be assigning ties to the emptier of two parts. Walk through to make sure
   //we're really filling out k partitioners.
 
 }
@@ -71,13 +71,15 @@ object Partitioners extends LDGPartitionerInstances with FennelPartitionerInstan
 sealed trait LDGPartitionerInstances {
 
   implicit def lDGPartitioner[G[_, _[_]], V, E[_]](implicit gEv: ParGraph[G, V, E], vEv: Partitioned[V], eEv: Edge[E]) =
-    new Partitioner[LDGPartitioner[G, ?, E]] {
+    new Partitioner[LDGPartitioner, (G[V, E], UNeighbourhood[V , E])] {
 
-      override def partition(partitioner: LDGPartitioner[G, V, E],
-                             input: (G[V, E], UNeighbourhood[V, E])): (LDGPartitioner[G, V, E], Option[PartId]) = {
+      override def partition(partitioner: LDGPartitioner,
+                             input: (G[V, E], UNeighbourhood[V, E])): (LDGPartitioner, Option[PartId]) = {
 
         (partitioner, partitioner.partitionOf(input._2, input._1))
+
       }
+
     }
 
 }

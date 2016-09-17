@@ -20,13 +20,14 @@ package org.gdget.loom
 import java.nio.file.{Files, Paths}
 
 import language.higherKinds
-import org.gdget.Edge
-import org.gdget.partitioned.{LogicalParGraph, Partitioned, Partitioner}
+import cats._
+import cats.implicits._
 import jawn.ast
 import jawn.AsyncParser
 import jawn.ParseException
 import jawn.ast.JValue
 
+import scala.annotation.tailrec
 import scala.io.Source
 
 /** Dumb container for `import` method at the moment, though have the feeling this could be significantly more
@@ -41,27 +42,38 @@ object GraphReader {
 
   //Spit into LogicalParGraph - how efficient is constructor? Use internal buffer?
 
-  //TODO: Switch to using Xor
-
-  def read[B](path: String, toInput: JValue => B): Either[ParseException, Stream[B]] = {
+  def read[B](path: String, toInput: JValue => Either[String, B]): Either[ParseException, Stream[B]] = {
     //Load the file lazily given path
     val input = Paths.get(path)
     val p = ast.JParser.async(mode = AsyncParser.UnwrapArray)
     val vertexStream: Iterator[String] = Source.fromFile(input.toFile).getLines()
 
-    def go(js: Iterator[String], inputStream: Stream[B]): Either[ParseException, Stream[B]] = {
-      if(js.hasNext)
+    @tailrec
+    def go(js: Iterator[String], inputStream: Stream[B], line: Int): Either[ParseException, Stream[B]] = {
+      if (js.hasNext)
         p.absorb(js.next()) match {
           case Right(entries) =>
-            //TODO: Do extra work here, possible have Parse function return trie and go Left if it fails
-            go(js, entries.map(toInput).toStream #::: inputStream)
+            entries.toStream.traverse(toInput) match {
+              case Right(bStream) =>
+                go(js, bStream #::: inputStream, line + 1)
+              case Left(errorMsg) =>
+                Left(ParseException(errorMsg, -1, line, -1))
+            }
           case Left(e) =>
             Left(e)
         }
-      else p.finish().right.map(_.map(toInput).toStream #::: inputStream)
+      else
+        p.finish().flatMap { entries =>
+          entries.toStream.traverse(toInput) match {
+            case Right(bStream) =>
+              Right(bStream #::: inputStream)
+            case Left(errorMsg) =>
+              Left(ParseException(errorMsg, -1, line, -1))
+          }
+        }
     }
 
-    go(vertexStream, Stream.empty[B])
+    go(vertexStream, Stream.empty[B], 0)
   }
 
 }
