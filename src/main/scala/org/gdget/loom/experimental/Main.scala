@@ -27,11 +27,12 @@ import org.gdget._
 import org.gdget.data.UNeighbourhood
 import org.gdget.loom.GraphReader
 import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, Vertex => ProvGenVertex}
-import org.gdget.partitioned.{PartId, Partitioned, Partitioner}
+import org.gdget.partitioned._
 import org.gdget.partitioned.data._
 import org.gdget.std.all._
 
 import scala.annotation.tailrec
+import scala.collection.{Map => AbsMap, mutable}
 import scala.language.higherKinds
 
 /** Entry point for the Loom experiments
@@ -42,6 +43,7 @@ object Main {
 
   /** Type Aliases for clarity */
   type ParseError = String
+  type AdjListBuilder[V] = mutable.Map[V, (V, Map[V, PartId], Map[V, PartId])]
   import LogicalParGraph._
 
   private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
@@ -96,16 +98,19 @@ object Main {
 
   /**  Tail recursive method to consume Neighbourhood stream and produce a LogicalParGraph */
   @tailrec
-  def nStreamToGraph[V: Partitioned, E[_]: Edge](ns: Stream[UNeighbourhood[V, E]],
-                                                                 g: LogicalParGraph[V, E]): LogicalParGraph[V, E] = ns match {
-    case hd #:: tl =>
-      //add hd to g creating dG
-      val dG = g
-      nStreamToGraph(tl, dG)
-    case _ =>
-      //If neighbourhood stream is empty, just return the g which we already have
-      g
-  }
+  private final def nStreamToAdj[V: Partitioned, E[_]: Edge, P]
+    (ns: Stream[UNeighbourhood[V, E]], adjBldr: AdjListBuilder[V], p: P)
+    (implicit pEv: Partitioner[P, (AdjListBuilder[V], UNeighbourhood[V, E])]): AdjListBuilder[V] = ns match {
+      case hd #:: tl =>
+        //add hd to adj creating dAdj
+        //TODO: Clean up typeclass style to be consistent, i.e. Partitioner[P].partition, or switch to machinist
+        val (pD, hdPart) = pEv.partition(p, (adjBldr, hd))
+        val dAdj =  adjBldr += (hd.center -> (hdPart.getOrElse(0.part), hd.in, hd.out))
+        nStreamToAdj(tl, dAdj, p)
+      case _ =>
+        //If neighbourhood stream is empty, just return the adj which we already have
+        adjBldr
+    }
 
   /** Method describes the setup and execution of the ProvGen Loom experiment */
   def provGenExperiment(conf: Config): String = {
@@ -160,7 +165,6 @@ object Main {
         // For one, maybe it should be a tail recursive functinon instead of a fold?
         // We need a mutable/builder based approach to making graphs
         // This will produce a LogicalParGraph and exhaust the stream
-
 
 
 

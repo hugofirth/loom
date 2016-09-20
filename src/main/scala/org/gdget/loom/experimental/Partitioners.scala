@@ -17,27 +17,27 @@ package org.gdget.loom.experimental
   * limitations under the License.
   */
 
+import cats._
+import cats.implicits._
 import org.gdget.Edge
 import org.gdget.data.UNeighbourhood
 
 import language.higherKinds
 import org.gdget.partitioned._
 
+import scala.collection.{Map => AbsMap}
+
 
 /** The LDG streaming graph partitioner described by Stanton & Kliot (http://dl.acm.org/citation.cfm?id=2339722) */
 case class LDGPartitioner(capacity: Int, pSizes: Map[PartId, Int], k: Int) {
 
-  //Note: Not carrying state properly. Need to pass graph to constructor and add to it as we partition vertices.
-  //This is a slightly bizarre design choice looking back on it, as if we immediately read the resulting stream of
-
-  def partitionOf[G[_, _[_]], V: Partitioned, E[_]: Edge](n: UNeighbourhood[V, E],
-                                                          g: G[V, E])(implicit gEv: ParGraph[G, V, E]): Option[PartId] = {
-
-    //Check if the neighbours of a vertex v are assigned yet (are in g)
+  def partitionOf[V: Partitioned, E[_]: Edge](n: UNeighbourhood[V, E],
+                                                            adj: AbsMap[V, (PartId, _, _)]): Option[PartId] = {
+    //Check if the neighbours of a vertex v are assigned yet (exist as entries in the adjacency matrix)
     //NOTE!!!!! The below only works if our vertices obey the partId != equality law
-    val existingNeighbours = ParGraph[G, V, E].findVertices(g)(n.neighbours.contains).toList
+    val existingNeighbours = adj.filterKeys(n.neighbours.contains)
     val neighbourPartitions = for {
-      n <- existingNeighbours
+      (n, _) <- existingNeighbours
       part <- Partitioned[V].partition(n)
     } yield (n, part)
     val partitionCounts = neighbourPartitions.groupBy(_._2).mapValues(_.size.toDouble)
@@ -46,12 +46,19 @@ case class LDGPartitioner(capacity: Int, pSizes: Map[PartId, Int], k: Int) {
       //Get the score of the current partition
       val pScore = pSizes.get(current._1).fold(0D) { s => current._2 * (1 - (s / capacity)) }
       //Check if it is greater than the current highscore, then carry greatest scoring partition forward
-      if(pScore > highScore._2) current else highScore
+      if(pScore > highScore._2) {
+        current
+      } else if(pScore == highScore._2) {
+        val minUsed = (x: ((PartId, Double), Int), y: ((PartId, Double), Int)) => if (x._2 > y._2) y._1 else x._1
+        (pSizes.get(current._1).map((current, _)) |@|
+          pSizes.get(highScore._1).map((highScore, _))).map(minUsed).getOrElse(highScore)
+      } else {
+        highScore
+      }
     }.map(_._1)
   }
 
-  //TODO: Above, how are we breaking ties? We should be assigning ties to the emptier of two parts. Walk through to make sure
-  //we're really filling out k partitioners.
+  //TODO: Above, walk through to make sure we're really filling out k partitioners.
 
 }
 
@@ -70,11 +77,11 @@ object Partitioners extends LDGPartitionerInstances with FennelPartitionerInstan
 
 sealed trait LDGPartitionerInstances {
 
-  implicit def lDGPartitioner[G[_, _[_]], V, E[_]](implicit gEv: ParGraph[G, V, E], vEv: Partitioned[V], eEv: Edge[E]) =
-    new Partitioner[LDGPartitioner, (G[V, E], UNeighbourhood[V , E])] {
+  implicit def lDGPartitioner[V: Partitioned, E[_]: Edge] =
+    new Partitioner[LDGPartitioner, (AbsMap[V, (PartId, _, _)], UNeighbourhood[V , E])] {
 
       override def partition(partitioner: LDGPartitioner,
-                             input: (G[V, E], UNeighbourhood[V, E])): (LDGPartitioner, Option[PartId]) = {
+                             input: (AbsMap[V, (PartId, _, _)], UNeighbourhood[V, E])): (LDGPartitioner, Option[PartId]) = {
 
         (partitioner, partitioner.partitionOf(input._2, input._1))
 
