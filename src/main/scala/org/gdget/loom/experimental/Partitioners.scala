@@ -29,7 +29,11 @@ import scala.collection.{Map => AbsMap}
 
 
 /** The LDG streaming graph partitioner described by Stanton & Kliot (http://dl.acm.org/citation.cfm?id=2339722) */
-case class LDGPartitioner(capacity: Int, pSizes: Map[PartId, Int], k: Int) {
+case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
+
+  val unused = (0 to k).map(_.part).filterNot(sizes.contains)
+
+  val pSizes = sizes ++ unused.map(_ -> 0)
 
   def partitionOf[V: Partitioned, E[_]: Edge](n: UNeighbourhood[V, E],
                                                             adj: AbsMap[V, (PartId, _, _)]): Option[PartId] = {
@@ -56,9 +60,11 @@ case class LDGPartitioner(capacity: Int, pSizes: Map[PartId, Int], k: Int) {
         highScore
       }
     }.map(_._1)
+    //TODO: Do something in the event of None which returns the equal smallest partitionId from pSizes. This will make
+    // sure we're really filling out k partitioners.
   }
 
-  //TODO: Above, walk through to make sure we're really filling out k partitioners.
+  //TODO: Above, walk through to
 
 }
 
@@ -80,13 +86,10 @@ sealed trait LDGPartitionerInstances {
   implicit def lDGPartitioner[V: Partitioned, E[_]: Edge] =
     new Partitioner[LDGPartitioner, (AbsMap[V, (PartId, _, _)], UNeighbourhood[V , E])] {
 
-      override def partition(partitioner: LDGPartitioner,
-                             input: (AbsMap[V, (PartId, _, _)], UNeighbourhood[V, E])): (LDGPartitioner, Option[PartId]) = {
-
-        (partitioner, partitioner.partitionOf(input._2, input._1))
-
+      override def partition[BB <: (AbsMap[V, (PartId, _, _)], UNeighbourhood[V, E])]
+        (partitioner: LDGPartitioner, input: BB): (LDGPartitioner, Option[PartId]) = {
+          (partitioner, partitioner.partitionOf(input._2, input._1))
       }
-
     }
 
 }

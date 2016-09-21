@@ -26,13 +26,15 @@ import jawn.ast.JValue
 import org.gdget._
 import org.gdget.data.UNeighbourhood
 import org.gdget.loom.GraphReader
+import org.gdget.loom.experimental.Experiment._
 import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, Vertex => ProvGenVertex}
 import org.gdget.partitioned._
 import org.gdget.partitioned.data._
 import org.gdget.std.all._
 
 import scala.annotation.tailrec
-import scala.collection.{Map => AbsMap, mutable}
+import scala.collection.{mutable, Map => AbsMap}
+import scala.concurrent.ExecutionContext
 import scala.language.higherKinds
 
 /** Entry point for the Loom experiments
@@ -43,7 +45,7 @@ object Main {
 
   /** Type Aliases for clarity */
   type ParseError = String
-  type AdjListBuilder[V] = mutable.Map[V, (V, Map[V, PartId], Map[V, PartId])]
+  type AdjListBuilder[V] = mutable.Map[V, (PartId, Map[V, Set[Unit]], Map[V, Set[Unit]])]
   import LogicalParGraph._
 
   private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
@@ -104,9 +106,9 @@ object Main {
       case hd #:: tl =>
         //add hd to adj creating dAdj
         //TODO: Clean up typeclass style to be consistent, i.e. Partitioner[P].partition, or switch to machinist
-        val (pD, hdPart) = pEv.partition(p, (adjBldr, hd))
+        val (dP, hdPart) = pEv.partition(p, (adjBldr, hd))
         val dAdj =  adjBldr += (hd.center -> (hdPart.getOrElse(0.part), hd.in, hd.out))
-        nStreamToAdj(tl, dAdj, p)
+        nStreamToAdj(tl, dAdj, dP)
       case _ =>
         //If neighbourhood stream is empty, just return the adj which we already have
         adjBldr
@@ -157,50 +159,36 @@ object Main {
         // of the graph (conf value) as well as k (number of partitions)
         val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
 
-        //Create an empty LogicalParGraph
-        val g = LogicalParGraph.empty[ProvGenVertex, HPair]
-
         //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
-        // partitions to the graph at each step. This step will be very performance intensive, look at how to handle.
-        // For one, maybe it should be a tail recursive functinon instead of a fold?
-        // We need a mutable/builder based approach to making graphs
+        // partitions to the adjacency matrix at each step.
         // This will produce a LogicalParGraph and exhaust the stream
+        val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
+        //TODO: Clean up Partitioner typeclass
+        val adj = nStreamToAdj(neighbours, bldr, p)
+        val g = LogicalParGraph.fromAdjList[ProvGenVertex, HPair](adj.toMap)
 
-
-
-
-
-        //Create experiment insance with produced graph
+        //Create experiment instance with produced graph
+        val exp = ProvGenExperiment(g)
 
         //Run the experiment
+        val results = exp.run(100, exp.periodicQueryStream(12738419))
 
         //Results of experiment are futures, look at our choice of return type and think about this.
+        import ExecutionContext.Implicits.global
+        results.onSuccess {
+          case Result(t, ipt) => println(s"A ${conf.numK}-way partitioning of the ProvGen graph, generated using " +
+            s"LDGPartitioner, suffered $ipt when executing its workload over $t seconds")
+        }
 
       })
 
     }
-
-      //Get json dump -
-
-      //In order to to do ^^ we will need to define a function which takes a JValue for each elem of the adjList JSon
-      // and returns parses it to return a Uneighbourhood
-
-      //Given Stream[Neighbourhood], for each partitioner:
-
-        //Consume Stream[Neighbourhood] to produce g: LogicalParGraph[ProvGenVertex, HPair]
-
-        //Now that we have g, create ProvGenExperiment instance and run 100 queries with one of the two stream options
-
-        //Note that ^^ requires that we have defined the ProvGen appropriate queries in ProvGenExpMeta
-
-        //Once we have the results (number of traversals and time), log it to console and add to Result string
-
     //Once we have done this for all combos, return string.
 
     //May need another method for Loom to easily manage multiple window sizes in experiments
 
 
-    ???
+    "This method is unfinished"
   }
 
 
