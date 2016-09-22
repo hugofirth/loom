@@ -57,7 +57,7 @@ object Main {
   def main(args: Array[String]): Unit = {
 
     //TEST
-    val base = "/Users/hugofirth/Desktop/"
+    val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
       rand = base + "provgen_rand_1000.json", stoch = "", numK = 8, size = 500012)
     provGenExperiment(conf)
@@ -182,6 +182,9 @@ object Main {
         //TODO: Clean up Partitioner typeclass
         val adj = nStreamToAdj(neighbours, bldr, p)
         val g = LogicalParGraph.fromAdjList[ProvGenVertex, HPair](adj.toMap)
+
+        val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
+        println(s"Partition sizes are: $pSizes")
 
         println(s"Finished parsing json in to graph @ $time")
 

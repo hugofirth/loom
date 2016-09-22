@@ -26,7 +26,6 @@ import org.gdget.std.all._
 import language.higherKinds
 import scala.concurrent._
 import scala.concurrent.duration.Duration
-import scala.util.{Failure, Success}
 
 /** Description of Class
   *
@@ -130,9 +129,9 @@ object Sandbox extends App {
 
   val interpreter = countingInterpreterK[Future, ProvGenVertex, UTuple]
   val result = q1.transKWith[Future](interpreter).run(c)
-  result.onComplete {
-    case Success(r) => println(s"Result is: $r and took ${interpreter.iptCount} traversals to evaluate.")
-    case Failure(e) => println(s"The query returns nothing and took ${interpreter.iptCount} traversals to evaluate.")
+  result.onSuccess {
+    case r @ hd :: tl => println(s"Result is: $r and took ${interpreter.iptCount} traversals to evaluate.")
+    case Nil => println(s"The query returns nothing and took ${interpreter.iptCount} traversals to evaluate.")
   }
 
   Await.result(result, Duration.Inf)

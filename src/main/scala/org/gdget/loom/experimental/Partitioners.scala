@@ -36,6 +36,7 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
   require(k>0, s"You must have 1 or more partitions! You have provided a k of $k")
 
 
+  //TODO: Investigate possible resetting of pSizes map here
   val unused = (0 to k).map(_.part).filterNot(sizes.contains)
 
   val pSizes = sizes ++ unused.map(_ -> 0)
@@ -92,7 +93,12 @@ sealed trait LDGPartitionerInstances {
 
       override def partition[BB <: (AbsMap[V, (PartId, _, _)], UNeighbourhood[V, E])]
         (partitioner: LDGPartitioner, input: BB): (LDGPartitioner, Option[PartId]) = {
-          (partitioner, partitioner.partitionOf(input._2, input._1))
+          val pId = partitioner.partitionOf(input._2, input._1)
+          val p = pId.map { id =>
+            val size = partitioner.sizes.getOrElse(id, 0)
+            partitioner.copy(sizes = partitioner.sizes.updated(id, size + 1))
+          }
+          (p.getOrElse(partitioner), pId)
       }
     }
 
