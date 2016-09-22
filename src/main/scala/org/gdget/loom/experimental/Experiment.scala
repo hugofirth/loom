@@ -144,6 +144,7 @@ sealed trait Experiment[V, E[_]] {
         //May seem weird to map the Future then not use the query result, but map is run against the *successful* result
         // of the future, therefore when the map function is executed, the mutable interpreter's iptCount is guaranteed
         // to be updated. Icky I know - will all change when able to return iptCount with query result.
+        println(s"IPT count for a query: ${interpreter.iptCount}")
         query.map(_ => interpreter.iptCount)
       } (g)
       timedQ._2.map(ipt => Result(timedQ._1, ipt))
@@ -173,13 +174,9 @@ object Experiment {
   }
 
   /** Types in the Experiment ADT */
-  case class ProvGenExperiment(g: LogicalParGraph[ProvGenVertex, HPair]) extends Experiment[ProvGenVertex, HPair] with
-    ProvGenExperimentMeta {
-    /** Typeclass instances for V & E */
-    override implicit def E: Edge[HPair] = Edge[HPair]
-
-    override implicit def V: Partitioned[ProvGenVertex] = Partitioned[ProvGenVertex]
-  }
+  case class ProvGenExperiment(g: LogicalParGraph[ProvGenVertex, HPair])
+                              (implicit val E: Edge[HPair],
+                               val V: Partitioned[ProvGenVertex]) extends Experiment[ProvGenVertex, HPair] with ProvGenExperimentMeta
 
   //case object MusicBrainzExperiment
   //case object DBLPExperiment

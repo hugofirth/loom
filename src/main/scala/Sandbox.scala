@@ -25,6 +25,8 @@ import org.gdget.std.all._
 
 import language.higherKinds
 import scala.concurrent._
+import scala.concurrent.duration.Duration
+import scala.util.{Failure, Success}
 
 /** Description of Class
   *
@@ -50,9 +52,9 @@ object Sandbox extends App {
   )
 
   val (p1,p2,p3,p4,p5) = (Entity(1, Option(1.part)),
-                          Entity(2, Option(1.part)),
+                          Entity(2, Option(2.part)),
                           Activity(3, Option(2.part)),
-                          Agent(4, Option(2.part)),
+                          Agent(4, Option(1.part)),
                           Activity(5, Option(2.part)))
 
   val c = LogicalParGraph[ProvGenVertex, UTuple](
@@ -104,6 +106,19 @@ object Sandbox extends App {
     } yield e
   }
 
+  def q1 = {
+    val op = QueryBuilder[LogicalParGraph, ProvGenVertex, UTuple]
+    for {
+      es <- op.getWhere {
+        case Entity(_, _) => true
+        case _ => false
+      }
+      es2 <- es.traverse(op.traverseNeighboursWhere(_) {
+        case Entity(_, _) => true
+        case _ => false
+      })
+    } yield es2.flatten
+  }
 
 
 
@@ -113,12 +128,14 @@ object Sandbox extends App {
 
   import org.gdget.loom.experimental._
 
-  val interpreter = countingInterpreterK[Future, (Int, PartId), UTuple]
-  val result = query.transKWith[Future](interpreter).run(b)
-  result.onSuccess {
-    case Some(edge) => println(s"Result is: $edge and took ${interpreter.iptCount} traversals to evaluate.")
-    case None => println(s"The query returns nothing and took ${interpreter.iptCount} traversals to evaluate.")
+  val interpreter = countingInterpreterK[Future, ProvGenVertex, UTuple]
+  val result = q1.transKWith[Future](interpreter).run(c)
+  result.onComplete {
+    case Success(r) => println(s"Result is: $r and took ${interpreter.iptCount} traversals to evaluate.")
+    case Failure(e) => println(s"The query returns nothing and took ${interpreter.iptCount} traversals to evaluate.")
   }
+
+  Await.result(result, Duration.Inf)
 
 
 }

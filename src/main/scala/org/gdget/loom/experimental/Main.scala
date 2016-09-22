@@ -18,6 +18,7 @@
 package org.gdget.loom.experimental
 
 import java.nio.file.Paths
+import java.util.Calendar
 
 import cats._
 import cats.implicits._
@@ -34,7 +35,8 @@ import org.gdget.std.all._
 
 import scala.annotation.tailrec
 import scala.collection.{mutable, Map => AbsMap}
-import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.Duration
+import scala.concurrent.{Await, ExecutionContext}
 import scala.language.higherKinds
 
 /** Entry point for the Loom experiments
@@ -82,7 +84,7 @@ object Main {
     def getNeighbour(j: JValue, d: Direction) = {
       val neighbourId = getId(j)
       neighbourId.flatMap {id =>
-        val lblOpt = j.get("label").getString
+        val lblOpt = j.get("rel").getString
         lblOpt.fold(Either.left[String, V]("Unable to properly parse edge label"))(eToV(_:String, id.toInt, d))
       }
     }
@@ -123,6 +125,8 @@ object Main {
   /** Method describes the setup and execution of the ProvGen Loom experiment */
   def provGenExperiment(conf: Config): String = {
 
+    def time = Calendar.getInstance.getTime.toString
+
     val vToV: (String, Int) => Either[String, ProvGenVertex] = {
       case ("AGENT", id) =>
         Right(Agent(id, None))
@@ -147,6 +151,8 @@ object Main {
         Left(s"Unrecognised edge label $other")
     }
 
+    println(s"Start reading in json @ $time")
+
     //For each stream order
     List(conf.dfs, conf.bfs, conf.rand).map { order =>
       //Get json dump = - create Stream[UNeighbourhood[ProvGenVertex, HPair]] with GraphReader
@@ -161,9 +167,13 @@ object Main {
         //Given Stream of neighbourhoods, for each partitioner
         import Partitioners._
 
+        println(s"Create the partitioner @ $time")
+
         //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
         // of the graph (conf value) as well as k (number of partitions)
         val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
+
+        println(s"Start parsing json in to graph @ $time")
 
         //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
         // partitions to the adjacency matrix at each step.
@@ -173,11 +183,19 @@ object Main {
         val adj = nStreamToAdj(neighbours, bldr, p)
         val g = LogicalParGraph.fromAdjList[ProvGenVertex, HPair](adj.toMap)
 
+        println(s"Finished parsing json in to graph @ $time")
+
+        println(s"Create experiment @ $time")
+
         //Create experiment instance with produced graph
         val exp = ProvGenExperiment(g)
 
+        println(s"Start running experiment @ $time")
+
         //Run the experiment
         val results = exp.run(10, exp.periodicQueryStream(12738419))
+
+        println(s"Finish running experiment @ $time")
 
         //Results of experiment are futures, look at our choice of return type and think about this.
         import ExecutionContext.Implicits.global
@@ -185,6 +203,8 @@ object Main {
           case Result(t, ipt) => println(s"A ${conf.numK}-way partitioning of the ProvGen graph, generated using " +
             s"LDGPartitioner, suffered $ipt when executing its workload over $t seconds")
         }
+
+        Await.result(results, Duration.Inf)
 
       })
 

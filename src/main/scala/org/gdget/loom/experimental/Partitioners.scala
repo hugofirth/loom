@@ -47,15 +47,10 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
 
     //Check if the neighbours of a vertex v are assigned yet (exist as entries in the adjacency matrix)
     //NOTE!!!!! The below only works if our vertices obey the partId != equality law
-    val existingNeighbours = adj.filterKeys(n.neighbours.contains)
-    val neighbourPartitions = for {
-      (n, _) <- existingNeighbours
-      part <- Partitioned[V].partition(n)
-    } yield (n, part)
-    val partitionCounts = neighbourPartitions.groupBy(_._2).mapValues(_.size.toDouble)
+    val existingNeighbours = n.neighbours.flatMap(adj.get).toList
+    val neighbourPartitions = existingNeighbours.map(_._1)
+    val partitionCounts = neighbourPartitions.groupBy(identity).mapValues(_.size.toDouble)
     //Adjust partition counts to maintain balance and find the biggest scoring partition
-
-
 
     partitionCounts.reduceLeftOption { (highScore, current) =>
       //Get the score of the current partition
