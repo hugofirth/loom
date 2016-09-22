@@ -31,12 +31,20 @@ import scala.collection.{Map => AbsMap}
 /** The LDG streaming graph partitioner described by Stanton & Kliot (http://dl.acm.org/citation.cfm?id=2339722) */
 case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
 
+  //TODO: Move to proper error handling, by using either?
+  require(capacity>0, s"You must indicate a partition capacity of greater than 0 to LDG. You have provided a capacity of $capacity")
+  require(k>0, s"You must have 1 or more partitions! You have provided a k of $k")
+
+
   val unused = (0 to k).map(_.part).filterNot(sizes.contains)
 
   val pSizes = sizes ++ unused.map(_ -> 0)
 
   def partitionOf[V: Partitioned, E[_]: Edge](n: UNeighbourhood[V, E],
                                                             adj: AbsMap[V, (PartId, _, _)]): Option[PartId] = {
+
+    def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
+
     //Check if the neighbours of a vertex v are assigned yet (exist as entries in the adjacency matrix)
     //NOTE!!!!! The below only works if our vertices obey the partId != equality law
     val existingNeighbours = adj.filterKeys(n.neighbours.contains)
@@ -46,6 +54,9 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
     } yield (n, part)
     val partitionCounts = neighbourPartitions.groupBy(_._2).mapValues(_.size.toDouble)
     //Adjust partition counts to maintain balance and find the biggest scoring partition
+
+
+
     partitionCounts.reduceLeftOption { (highScore, current) =>
       //Get the score of the current partition
       val pScore = pSizes.get(current._1).fold(0D) { s => current._2 * (1 - (s / capacity)) }
@@ -53,18 +64,16 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
       if(pScore > highScore._2) {
         current
       } else if(pScore == highScore._2) {
-        val minUsed = (x: ((PartId, Double), Int), y: ((PartId, Double), Int)) => if (x._2 > y._2) y._1 else x._1
-        (pSizes.get(current._1).map((current, _)) |@|
-          pSizes.get(highScore._1).map((highScore, _))).map(minUsed).getOrElse(highScore)
+        val cSize = pSizes.get(current._1).map(current ->  _)
+        val hSize = pSizes.get(highScore._1).map(highScore -> _)
+        (cSize |@| hSize).map(minUsed).map(_._1).getOrElse(highScore)
+
       } else {
         highScore
       }
-    }.map(_._1)
-    //TODO: Do something in the event of None which returns the equal smallest partitionId from pSizes. This will make
-    // sure we're really filling out k partitioners.
+    }.orElse(pSizes.reduceLeftOption(minUsed)).map(_._1)
+    //In the event that a vertex has no neighbours in any partition, assign them to the emptiest partition of the k
   }
-
-  //TODO: Above, walk through to
 
 }
 

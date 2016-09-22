@@ -54,6 +54,12 @@ object Main {
 
   def main(args: Array[String]): Unit = {
 
+    //TEST
+    val base = "/Users/hugofirth/Desktop/"
+    val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
+      rand = base + "provgen_rand_1000.json", stoch = "", numK = 8, size = 500012)
+    provGenExperiment(conf)
+    // /TEST
 
 
   }
@@ -171,7 +177,7 @@ object Main {
         val exp = ProvGenExperiment(g)
 
         //Run the experiment
-        val results = exp.run(100, exp.periodicQueryStream(12738419))
+        val results = exp.run(10, exp.periodicQueryStream(12738419))
 
         //Results of experiment are futures, look at our choice of return type and think about this.
         import ExecutionContext.Implicits.global

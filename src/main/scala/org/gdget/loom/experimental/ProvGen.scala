@@ -19,8 +19,10 @@ package org.gdget.loom.experimental
 
 import cats.{Eq, Show}
 import org.gdget.HPair
+import org.gdget.data.query.QueryBuilder
 import org.gdget.loom.experimental.Experiment.Q
 import org.gdget.partitioned._
+import org.gdget.partitioned.data.LogicalParGraph
 
 
 
@@ -77,7 +79,41 @@ object ProvGen {
   /** Trait containing information needed for running ProvGen experiments, including graph location and queries */
   trait ProvGenExperimentMeta extends ExperimentMeta[Vertex, HPair] { self: Experiment[Vertex, HPair] =>
 
-    override def queries: Map[String, Q[Vertex, HPair]] = ???
+    import cats._
+    import cats.syntax.traverse._
+    import cats.instances.all._
+
+//    def query = {
+//      for {
+//        as <- op.getWhere {
+//          case Activity(_, _) => true
+//          case _ => false
+//        }
+//       es <- as.traverse(op.traverseNeighboursWhere(_) {
+//         case Entity(_, _) => true
+//         case _ => false
+//       })
+//       e <- op.where(es)(_.size > 1)
+//     } yield e
+//   }
+
+    //TODO: Most naive implementation possible from paper 1, need to improve query lang
+    def q1 = {
+      val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
+      for {
+        es <- op.getWhere {
+          case Entity(_, _) => true
+          case _ => false
+        }
+        es2 <- es.traverse(op.traverseNeighboursWhere(_) {
+          case Entity(_, _) => true
+          case _ => false
+        })
+      } yield es2.flatten
+    }
+
+
+    override def queries: Map[String, Q[Vertex, HPair]] = Map("q1" -> q1)
   }
 
 }

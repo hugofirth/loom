@@ -156,8 +156,10 @@ sealed trait Experiment[V, E[_]] {
 object Experiment {
 
   /** Type Aliases for conciceness and clarity */
-  //Note that queries needn't return a list of edges, but as we need a fixed return type this seems the most flexible?
-  type Q[V, E[_]] = QueryIO[LogicalParGraph, V, E, List[E[V]]]
+  //Note that we don't specify a return type for the queries, because for this experiment we don't care about getting more
+  // than metadata for the execution of each query from the interpreter. If was wanted to use the results we would have
+  // have to do something smarter here, or just fix the query return type.
+  type Q[V, E[_]] = QueryIO[LogicalParGraph, V, E, _]
   type QStream[V, E[_]] = Stream[Q[V, E]]
 
   /** Result case class, which takes Time and IPT at a minimum */
