@@ -144,7 +144,6 @@ sealed trait Experiment[V, E[_]] {
         //May seem weird to map the Future then not use the query result, but map is run against the *successful* result
         // of the future, therefore when the map function is executed, the mutable interpreter's iptCount is guaranteed
         // to be updated. Icky I know - will all change when able to return iptCount with query result.
-        println(s"IPT count for a query: ${interpreter.iptCount}")
         query.map(_ => interpreter.iptCount)
       } (g)
       timedQ._2.map(ipt => Result(timedQ._1, ipt))

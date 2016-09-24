@@ -101,10 +101,7 @@ object ProvGen {
     def q1 = {
       val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
       for {
-        es <- op.getWhere {
-          case Entity(_, _) => true
-          case _ => false
-        }
+        es <- op.getAll { case v: Entity => v }
         es2 <- es.traverse(op.traverseNeighboursWhere(_) {
           case Entity(_, _) => true
           case _ => false
