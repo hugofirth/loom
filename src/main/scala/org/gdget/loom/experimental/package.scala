@@ -75,14 +75,21 @@ package object experimental {
             fa.op { g =>
               val n = Graph[LogicalParGraph, V, E].neighbourhood(g, v)
               val es = n.fold(List.empty[E[V]])(_.edges.filter(cond).toList)
-              ipt += es.filter(e => g.partitionOf(v) != Edge[E].other(e, v).flatMap(g.partitionOf)).size
+              ipt += es.count(e => g.partitionOf(v) != Edge[E].other(e, v).flatMap(g.partitionOf))
               es
             }
           case TraverseNeighboursWhere(v, cond) =>
             fa.op { g =>
               val n = Graph[LogicalParGraph, V, E].neighbourhood(g, v)
               val ns = n.fold(List.empty[V])(_.neighbours.filter(cond).toList)
-              ipt += ns.filter(n => g.partitionOf(v) != g.partitionOf(n)).size
+              ipt += ns.count(n => g.partitionOf(v) != g.partitionOf(n))
+              ns
+            }
+          case TraverseAllNeighbours(v, f) =>
+            fa.op { g =>
+              val n = Graph[LogicalParGraph, V, E].neighbourhood(g, v)
+              val ns = n.fold(List.empty[V])(_.neighbours.collect(f).toList)
+              ipt += ns.count(n => g.partitionOf(v) != g.partitionOf(n))
               ns
             }
           case _ => fa.defaultTransK[M]

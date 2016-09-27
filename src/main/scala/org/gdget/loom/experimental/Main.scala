@@ -99,8 +99,8 @@ object Main {
     for {
       id <- getId(jValue)
       center <- getCenter(jValue, id.toInt)
-      inN <- getNeighbours(jValue.get("in"), In)
-      outN <- getNeighbours(jValue.get("out"), Out)
+      inN <- getNeighbours(jValue.get("in"), Out)
+      outN <- getNeighbours(jValue.get("out"), In)
       edges = Set(())
     } yield UNeighbourhood[V, HPair](center, inN.map(_ -> edges).toMap, outN.map(_ -> edges).toMap)
 
@@ -115,6 +115,8 @@ object Main {
         //add hd to adj creating dAdj
         //TODO: Clean up typeclass style to be consistent, i.e. Partitioner[P].partition, or switch to machinist
         val (dP, hdPart) = pEv.partition(p, (adjBldr, hd))
+        //TODO: Make sure that partitioner actually updates hd.center to contain this partition (unless we're sticking to
+        //  the other wrapper style. Otherwise could have unforseen consequences.
         val dAdj =  adjBldr += (hd.center -> (hdPart.getOrElse(0.part), hd.in, hd.out))
         nStreamToAdj(tl, dAdj, dP)
       case _ =>
@@ -138,6 +140,7 @@ object Main {
         Left(s"Unrecognised vertex label $other")
     }
 
+    //TODO: Fix/Flip parsing bug!!
     val eToV: (String, Int, Direction) => Either[String, ProvGenVertex] = {
       case ("WASDERIVEDFROM", id, _) =>
         Right(Entity(id.toInt, None))
@@ -172,7 +175,7 @@ object Main {
         //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
         // of the graph (conf value) as well as k (number of partitions)
         val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
-
+//        val p = HashPartitioner(conf.numK, 0.part)
         println(s"Start parsing json in to graph @ $time")
 
         //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -194,6 +197,9 @@ object Main {
         val exp = ProvGenExperiment(g)
 
         println(s"Start running experiment @ $time")
+
+        //Test queries
+        exp.trial()
 
         //Run the experiment
         val results = exp.run(10, exp.periodicQueryStream(12738419))

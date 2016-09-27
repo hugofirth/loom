@@ -35,7 +35,6 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
   require(capacity>0, s"You must indicate a partition capacity of greater than 0 to LDG. You have provided a capacity of $capacity")
   require(k>0, s"You must have 1 or more partitions! You have provided a k of $k")
 
-
   //TODO: Investigate possible resetting of pSizes map here
   val unused = (0 to k).map(_.part).filterNot(sizes.contains)
 
@@ -73,35 +72,36 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
 
 }
 
-
-
 /** The Fennel partitioner described by Tsourakakis et al. (http://dl.acm.org/citation.cfm?id=2556213) */
-case class FennelPartitioner(a: Int) {
+case class FennelPartitioner(a: Int)
 
-}
+case class HashPartitioner(k: Int, nextPart: PartId)
 
+object Partitioners {
 
-
-object Partitioners extends LDGPartitionerInstances with FennelPartitionerInstances {
-
-}
-
-sealed trait LDGPartitionerInstances {
+  implicit def hashPartitioner[B] = new Partitioner[HashPartitioner, B] {
+    override def partition[BB <: B](partitioner: HashPartitioner, input: BB): (HashPartitioner, Option[PartId]) = {
+      val nextId = (partitioner.nextPart.id + 1)%partitioner.k
+      (partitioner.copy(nextPart = nextId.part), Option(partitioner.nextPart))
+    }
+  }
 
   implicit def lDGPartitioner[V: Partitioned, E[_]: Edge] =
     new Partitioner[LDGPartitioner, (AbsMap[V, (PartId, _, _)], UNeighbourhood[V , E])] {
 
       override def partition[BB <: (AbsMap[V, (PartId, _, _)], UNeighbourhood[V, E])]
-        (partitioner: LDGPartitioner, input: BB): (LDGPartitioner, Option[PartId]) = {
-          val pId = partitioner.partitionOf(input._2, input._1)
-          val p = pId.map { id =>
-            val size = partitioner.sizes.getOrElse(id, 0)
-            partitioner.copy(sizes = partitioner.sizes.updated(id, size + 1))
-          }
-          (p.getOrElse(partitioner), pId)
+      (partitioner: LDGPartitioner, input: BB): (LDGPartitioner, Option[PartId]) = {
+        val pId = partitioner.partitionOf(input._2, input._1)
+        val p = pId.map { id =>
+          val size = partitioner.sizes.getOrElse(id, 0)
+          partitioner.copy(sizes = partitioner.sizes.updated(id, size + 1))
+        }
+        (p.getOrElse(partitioner), pId)
       }
     }
 
 }
 
-sealed trait FennelPartitionerInstances
+
+
+

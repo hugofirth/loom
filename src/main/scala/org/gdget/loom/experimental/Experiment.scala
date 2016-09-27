@@ -151,7 +151,16 @@ sealed trait Experiment[V, E[_]] {
     resultStream.reduceLeft(_ |+| _) 
   }
 
-}
+  /** Simple method to test each of the specified queries in the experiment against the experiment's graph and print
+    * the results to std out (should probably make this a bit better, but needs must when the devil calls)
+    */
+  def trial(): Unit = queries.foreach { case (key, q) =>
+    println(s"Testing query $key")
+    val result = q.transK[Id].run(g)
+    println(s"Printing result $result")
+  }
+
+ }
 
 object Experiment {
 

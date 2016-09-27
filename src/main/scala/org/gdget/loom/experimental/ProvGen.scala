@@ -83,34 +83,36 @@ object ProvGen {
     import cats.syntax.traverse._
     import cats.instances.all._
 
-//    def query = {
-//      for {
-//        as <- op.getWhere {
-//          case Activity(_, _) => true
-//          case _ => false
-//        }
-//       es <- as.traverse(op.traverseNeighboursWhere(_) {
-//         case Entity(_, _) => true
-//         case _ => false
-//       })
-//       e <- op.where(es)(_.size > 1)
-//     } yield e
-//   }
-
     //TODO: Most naive implementation possible from paper 1, need to improve query lang
     def q1 = {
       val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
       for {
-        es <- op.getAll { case v: Entity => v }
-        es2 <- es.traverse(op.traverseNeighboursWhere(_) {
-          case Entity(_, _) => true
-          case _ => false
-        })
-      } yield es2.flatten
+        es <- op.getAll[Entity]
+        es2 <- es.traverse(op.traverseAllNeighbours[Entity])
+        es3 <- es2.flatten.traverse(op.traverseAllNeighbours[Entity])
+      } yield es3.flatten
     }
 
+    def q2 = {
+      val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
+      for {
+        age <- op.getAll[Agent]
+        act <- age.traverse(op.traverseAllNeighbours[Activity])
+        ent <- act.flatten.traverse(op.traverseAllNeighbours[Entity])
+        ent2 <- ent.flatten.traverse(op.traverseAllNeighbours[Entity])
+        act2 <- ent2.flatten.traverse(op.traverseAllNeighbours[Activity])
+        age2 <- act2.flatten.traverse(op.traverseAllNeighbours[Agent])
+      } yield age2.flatten
+    }
 
-    override def queries: Map[String, Q[Vertex, HPair]] = Map("q1" -> q1)
+    def q3 = ???
+
+    def q4 = ???
+
+
+
+
+    override def queries: Map[String, Q[Vertex, HPair]] = Map("q1" -> q1, "q2" -> q2)
   }
 
 }
