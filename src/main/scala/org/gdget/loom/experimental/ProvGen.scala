@@ -105,7 +105,6 @@ object ProvGen {
       } yield age2.flatten
     }
 
-    def q3 = ???
 
     def q4 = ???
 

@@ -20,9 +20,9 @@ package org.gdget.loom
 import language.higherKinds
 import scala.collection.mutable
 import org.gdget.{Edge, Graph}
-
 import cats._
 import cats.syntax.all._
+import org.gdget.data.SimpleGraph
 
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
@@ -125,7 +125,7 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
         case None => None
         case Some(node) => node.withFactors(tail)
       }
-    case _ => Some(this)
+    case _ => Some(self)
   }
 
 
@@ -139,7 +139,11 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
     def corecurse(parent: TPSTryNode[G, V, E], es: Set[E[V]], depth: Int, sigs: SigTable[G, V, E]): TPSTryNode[G, V, E] = {
 
       //Get set of vertices from set of neighbours
-      val vs = es.map(Edge[E].left) ++ es.map(Edge[E].right)
+      val vs = if (es.isEmpty)
+        Graph[G, V, E].vertices(graph).toSet
+      else
+        es.flatMap(e => Edge[E].vertices(e)._1 :: Edge[E].vertices(e)._2 :: Nil)
+
       //Get the set of all edges incident to es, including es
       val neighbourhoods = vs.flatMap(Graph[G, V, E].neighbourhood(graph, _))
       //Remove es to get the set of edges which are incident to es but not *in* es
@@ -147,12 +151,23 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
       //Fold Left over each indicent edge en
       ns.foldLeft(parent) { (p, en) =>
         //Initialise sigsTable at this depth if it doesn't exist yet
-        if(sigs.size < depth) sigs(depth) = mutable.HashMap.empty[BigInt, NodeBuilder[G, V, E]]
+        if(sigs.size <= depth) sigs(depth) = mutable.HashMap.empty[BigInt, NodeBuilder[G, V, E]]
         // Calculate factor of en
         val (l, r) = Edge[E].vertices(en)
-        val factor = Labelled[V].label(l) - Labelled[V].label(r)
+        //TODO:  Fix factor calculations to do degree as well
+        //Create simplegraph from parent repr
+        val pG = SimpleGraph(parent.repr.toSeq:_*)
+        //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
+        val lD = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
+        val rD = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
+        //Calculate the new degree factor for both l & r
+        val rDegFactor = Labelled[V].label(r) + (rD + 1)
+        val lDegFactor = Labelled[V].label(l) + (lD + 1)
+        val eFactor = Labelled[V].label(l) - Labelled[V].label(r)
+        //Calculate combined factor and new signature
+        val factor = rDegFactor * lDegFactor * eFactor
         val enSig = factor * p.signature
-        //create a builder if one is not found in sigTable
+        //create a builder if one is not found in sigTable with same signature and size
         val b = (sigs(depth).get(enSig), p.children.get(factor)) match {
           case (Some(existing), _) => existing.support += 1; existing
           case (None, Some(c)) => NodeBuilder(c.repr, c.support + 1, c.signature, c.children)
@@ -177,11 +192,27 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
     //TODO: Fix for depth 0/1, never actually adds single edges to the trie
     val edges = Graph[G, V, E].edges(graph)
     val sigTable = mutable.ArrayBuffer.empty[mutable.HashMap[BigInt, NodeBuilder[G, V, E]]]
-    edges.foldLeft(this) { (trie, edge) =>
-      corecurse(trie, Set(edge), 0, sigTable)
+    val trieBldr = corecurse(self, Set.empty[E[V]], 0, sigTable)
+
+    //Below may have intangible benefits. Investigate.
+//    edges.foldLeft(self) { (trie, edge) =>
+//      //For each individual edge, add it to the trie
+//      corecurse(trie, Set(edge), 0, sigTable)
+//    }
+
+    self.build()
+  }
+
+
+  def build(): TPSTryNode[G, V, E] = {
+
+    def recurse(bldr: TPSTryNode[G, V, E]): TPSTryNode[G, V, E] = bldr match {
+      case NodeBuilder(es, supp, sig, c) if c.isEmpty => Tip(es, supp, sig)
+      case NodeBuilder(es, supp, sig, c) => Node(es, supp, sig, c.mapValues(recurse))
+      case a => a
     }
 
-    //build() the builder Trie
+    recurse(self)
   }
 
 
@@ -222,6 +253,7 @@ object TPSTryNode {
     val children = Map.empty[Factor, TPSTryNode[G, V, E]]
   }
 
+  //TODO: Do not make this extend TPSTryNode, mutability should be typechecked
   private[loom] case class NodeBuilder[G[_, _[_]], V, E[_]](repr: Set[E[V]],
                                                             var support: Int,
                                                             signature: BigInt,

@@ -23,4 +23,25 @@ package org.gdget.loom
   */
 class Loom {
 
+  //TPSTry
+  //Motif support threshold
+
+  //Either change to using a Partitioned[A] case class wrapper for partitioned element types or add a setPart method to
+  //  existing partitioned typeclass
+
+  //Refactor Partitioner typeclass to return an Option[V: Partitioned], Rather than an Option[PartId]?
+  //How do we do buffered partitioners?
+    //One option is abstract over Option in return type to some Foldable F[_]. That way some partitioners could return
+    //  Option[V], another could return List[V].
+    //Another option is to have another Partitioner typeclass for buffered partitioners which must return a V id as well
+    //  as a partId, and the V id need not refer to the vertex just passed in. This pushes the window management up to
+    //  the callsite. This seems like a bad idea.
+  //We're going with abstracting to a Foldable TC F[_] and returning F[V] rather than an F[PartId].
+
+  //Loom will still need the AdjListBuilder as an input like LDG
+  //The window can be internal though.
+
+  //Does it make sense to make the
+
+
 }
