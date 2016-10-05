@@ -40,17 +40,33 @@ import scala.collection.mutable.ArrayBuffer
   *
   * @author hugofirth
   */
-final class TPSTry[G[_, _[_]], V, E[_]] private (val root: TPSTryNode[G, V, E]) {
+final class TPSTry[G[_, _[_]], V, E[_]] private (val root: TPSTryNode[G, V, E], val total: Int) {
+
+  import TPSTryNode._
 
   /** Public interface to TPSTryNode's add method. Adds all subgraphs of the provided graph as Nodes in the TPSTry */
-  def add(graph: G[V, E])(implicit gEv: Graph[G, V, E], eEv: Edge[E], vEv: Labelled[V]) = root.add(graph)
+  def add(graph: G[V, E])(implicit gEv: Graph[G, V, E], eEv: Edge[E], vEv: Labelled[V]) = new TPSTry(root.add(graph), total + 1)
 
   /** Get TPSTry Node which has signature x and return it. */
 
-
   /** TODO: move or mirror withFactors up here? */
 
-  /** TODO: Make motifs method to return sub-TPSTry */
+  /** Simple method recurses through the TPSTry nodes and returns the sub-DAG where all nodes have a support ratio
+    * greater than the provided threshold value. We call these nodes Motifs.
+    */
+  def motifsFor(threshold: Double): TPSTry[G, V, E] = {
+    def pruneLowSupport(node: TPSTryNode[G, V, E]): TPSTryNode[G, V, E] = {
+      val motifC = node.children.filter { case (_, c) => c.support.toDouble/total >= threshold }
+      //TODO: Work out how to properly handle Root case, is a bit redundant at the moment
+      //TODO: Tail recursive?
+      if(motifC.isEmpty)
+        Tip(node.repr, node.support, node.signature)
+      else
+        Node(node.repr, node.support, node.signature, motifC.mapValues(pruneLowSupport))
+    }
+
+    new TPSTry(pruneLowSupport(root), total)
+  }
 
 }
 
@@ -58,11 +74,11 @@ object TPSTry {
 
   def apply[G[_, _[_]], V, E[_]](graph: G[V, E])(implicit gEv: Graph[G, V, E],
                                                  vEv: Labelled[V],
-                                                 eEv: Edge[E]) = new TPSTry[G, V, E](TPSTryNode(graph))
+                                                 eEv: Edge[E]) = new TPSTry[G, V, E](TPSTryNode(graph), 1)
 
   def empty[G[_, _[_]], V, E[_]](implicit gEv: Graph[G, V, E],
                                  vEv: Labelled[V],
-                                 eEv: Edge[E])  = new TPSTry[G, V, E](TPSTryNode.empty[G, V, E])
+                                 eEv: Edge[E])  = new TPSTry[G, V, E](TPSTryNode.empty[G, V, E], 0)
 }
 
 
@@ -89,7 +105,7 @@ sealed trait TPSTryNode[G[_, _[_]], V, E[_]] { self =>
   def signature: BigInt
 
   /** Internal representation of this TPSTry node's associated graph G. Is a set of edges */
-  protected def repr: Set[E[V]]
+  protected[loom] def repr: Set[E[V]]
 
   /** The map from Keys to child subTries
     *

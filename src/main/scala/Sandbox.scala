@@ -33,22 +33,7 @@ import scala.concurrent.duration.Duration
   */
 object Sandbox extends App {
 
-  val (v1, v2, v3, v4, v5, v6) = (1 -> 1.part, 2 -> 1.part, 3 -> 1.part, 4 -> 2.part, 5 -> 2.part, 6 -> 2.part)
-
   type UTuple[A] = (A, A)
-
-  val b: LogicalParGraph[(Int, PartId), UTuple] = LogicalParGraph[(Int, PartId), UTuple](
-    v1 -> v4,
-    v1 -> v5,
-    v1 -> v6,
-    v2 -> v1,
-    v3 -> v2,
-    v3 -> v1,
-    v4 -> v3,
-    v5 -> v2,
-    v5 -> v6,
-    v6 -> v3
-  )
 
   val (p1,p2,p3,p4,p5) = (Entity(1, Option(1.part)),
                           Entity(2, Option(2.part)),
@@ -80,15 +65,6 @@ object Sandbox extends App {
 
   //TODO: What about a Queryable function which takes a Graph and a ParScheme. Perhaps also an implicit QueryBuilder
   //  which I could then use to prop up type inference?
-
-  def query = {
-    val op = QueryBuilder[LogicalParGraph, (Int, PartId), UTuple]
-    for {
-      v <- op.get(v1)
-      p <- v.traverse(op.traverseEdge(_, (v1, v4)))
-      _ <- op.traverseEdge(v4, (v4, v3))
-    } yield p.flatten
-  }
 
   def query2 = {
     val op = QueryBuilder[LogicalParGraph, ProvGenVertex, UTuple]

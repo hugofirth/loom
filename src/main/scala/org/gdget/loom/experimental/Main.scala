@@ -59,7 +59,7 @@ object Main {
     //TEST
     val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
-      rand = base + "provgen_rand_1000.json", stoch = "", numK = 8, size = 500012)
+      rand = base + "provgen_rand_1000.json", stoch = "", numK = 32, size = 500012)
     provGenExperiment(conf)
     // /TEST
 
@@ -110,14 +110,16 @@ object Main {
   @tailrec
   private final def nStreamToAdj[V: Partitioned, E[_]: Edge, P]
     (ns: Stream[UNeighbourhood[V, E]], adjBldr: AdjListBuilder[V], p: P)
-    (implicit pEv: Partitioner[P, (AdjListBuilder[V], UNeighbourhood[V, E])]): AdjListBuilder[V] = ns match {
+    (implicit pEv: Partitioner[P, UNeighbourhood[V, E], AdjListBuilder[V], Option]): AdjListBuilder[V] = ns match {
       case hd #:: tl =>
         //add hd to adj creating dAdj
         //TODO: Clean up typeclass style to be consistent, i.e. Partitioner[P].partition, or switch to machinist
-        val (dP, hdPart) = pEv.partition(p, (adjBldr, hd))
+        val (dP, partitioned) = pEv.partition(p, hd, adjBldr)
+        val dAdj = partitioned.fold(adjBldr) { case (dHd, dHdPart) =>
+          adjBldr += (dHd.center -> (dHdPart, dHd.in, dHd.out))
+        }
         //TODO: Make sure that partitioner actually updates hd.center to contain this partition (unless we're sticking to
-        //  the other wrapper style. Otherwise could have unforseen consequences.
-        val dAdj =  adjBldr += (hd.center -> (hdPart.getOrElse(0.part), hd.in, hd.out))
+        //  the other wrapper style). Otherwise could have unforseen consequences.
         nStreamToAdj(tl, dAdj, dP)
       case _ =>
         //If neighbourhood stream is empty, just return the adj which we already have

@@ -17,11 +17,23 @@
   */
 package org.gdget.loom
 
+import cats.Foldable
+import org.gdget.Edge
+import org.gdget.data.UNeighbourhood
+import org.gdget.partitioned.{ParGraph, PartId, Partitioned, Partitioner}
+
+import scala.collection.{Map => AbsMap}
+import language.higherKinds
+import scala.collection.immutable.Queue
+
 /** Description of Class
   *
   * @author hugofirth
   */
-class Loom {
+case class Loom[G[_, _[_]], V, E[_]](capacity: Int, sizes: Map[PartId, Int], k: Int, motifs: TPSTry[G, V, E],
+                                     matchList: Map[V, (Set[E[V]], TPSTryNode[G, V, E])],
+                                     window: Queue[E[V]])(implicit pEv: ParGraph[G, V, E], eEv: Edge[E])  {
+
 
   //TPSTry
   //Motif support threshold
@@ -44,4 +56,20 @@ class Loom {
   //Does it make sense to make the
 
 
+}
+
+object Loom {
+
+  implicit def loomPartitioner[G[_, _[_]], V: Partitioned, E[_]: Edge](implicit gEv: ParGraph[G, V, E]) =
+    new Partitioner[Loom[G, V, E], UNeighbourhood[V, E], AbsMap[V, (PartId, _, _)], List] {
+
+      override implicit def F = Foldable[List]
+
+      override def partition[CC <: AbsMap[V, (PartId, _, _)]](partitioner: Loom[G, V, E],
+                                                              input: UNeighbourhood[V, E],
+                                                              context: CC): (Loom[G, V, E], List[(UNeighbourhood[V, E], PartId)]) = {
+
+        //TODO: Implement LOOM.
+      }
+    }
 }

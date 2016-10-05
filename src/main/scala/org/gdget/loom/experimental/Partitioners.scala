@@ -59,7 +59,7 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
       if(pScore > highScore._2) {
         current
       } else if(pScore == highScore._2) {
-        val cSize = pSizes.get(current._1).map(current ->  _)
+        val cSize = pSizes.get(current._1).map(current -> _)
         val hSize = pSizes.get(highScore._1).map(highScore -> _)
         (cSize |@| hSize).map(minUsed).map(_._1).getOrElse(highScore)
 
@@ -79,24 +79,31 @@ case class HashPartitioner(k: Int, nextPart: PartId)
 
 object Partitioners {
 
-  implicit def hashPartitioner[B] = new Partitioner[HashPartitioner, B] {
-    override def partition[BB <: B](partitioner: HashPartitioner, input: BB): (HashPartitioner, Option[PartId]) = {
+  implicit def hashPartitioner[B, C] = new Partitioner[HashPartitioner, B, C, Option] {
+    override def partition[CC <: C](partitioner: HashPartitioner, input: B,
+                                    context: CC): (HashPartitioner, Option[(B, PartId)]) = {
       val nextId = (partitioner.nextPart.id + 1)%partitioner.k
-      (partitioner.copy(nextPart = nextId.part), Option(partitioner.nextPart))
+      (partitioner.copy(nextPart = nextId.part), Option(input, partitioner.nextPart))
     }
+
+    override implicit def F = Foldable[Option]
+
   }
 
   implicit def lDGPartitioner[V: Partitioned, E[_]: Edge] =
-    new Partitioner[LDGPartitioner, (AbsMap[V, (PartId, _, _)], UNeighbourhood[V , E])] {
+    new Partitioner[LDGPartitioner, UNeighbourhood[V , E], AbsMap[V, (PartId, _, _)], Option] {
 
-      override def partition[BB <: (AbsMap[V, (PartId, _, _)], UNeighbourhood[V, E])]
-      (partitioner: LDGPartitioner, input: BB): (LDGPartitioner, Option[PartId]) = {
-        val pId = partitioner.partitionOf(input._2, input._1)
-        val p = pId.map { id =>
-          val size = partitioner.sizes.getOrElse(id, 0)
-          partitioner.copy(sizes = partitioner.sizes.updated(id, size + 1))
-        }
-        (p.getOrElse(partitioner), pId)
+      override implicit def F = Foldable[Option]
+
+      override def partition[CC <: AbsMap[V, (PartId, _, _)]](partitioner: LDGPartitioner, input: UNeighbourhood[V , E],
+                                                         context: CC): (LDGPartitioner, Option[(UNeighbourhood[V , E], PartId)]) = {
+
+          val pId = partitioner.partitionOf(input, context)
+          val p = pId.map { id =>
+            val size = partitioner.sizes.getOrElse(id, 0)
+            partitioner.copy(sizes = partitioner.sizes.updated(id, size + 1))
+          }
+          (p.getOrElse(partitioner), pId.map((input, _)))
       }
     }
 
