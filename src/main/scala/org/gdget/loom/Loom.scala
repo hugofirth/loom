@@ -17,7 +17,8 @@
   */
 package org.gdget.loom
 
-import cats.Foldable
+import cats._
+import cats.implicits._
 import org.gdget.Edge
 import org.gdget.data.UNeighbourhood
 import org.gdget.partitioned.{ParGraph, PartId, Partitioned, Partitioner}
@@ -26,17 +27,67 @@ import scala.collection.{Map => AbsMap}
 import language.higherKinds
 import scala.collection.immutable.Queue
 
-/** Description of Class
+/** The Loom graph partitioner. TODO: Expand this comment ....
   *
   * @author hugofirth
   */
-case class Loom[G[_, _[_]], V, E[_]](capacity: Int, sizes: Map[PartId, Int], k: Int, motifs: TPSTry[G, V, E],
-                                     matchList: Map[V, (Set[E[V]], TPSTryNode[G, V, E])],
-                                     window: Queue[E[V]])(implicit pEv: ParGraph[G, V, E], eEv: Edge[E])  {
+case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int, sizes: Map[PartId, Int], k: Int,
+                                                                   motifs: TPSTry[G, V, E],
+                                                                   matchList: Map[V, Set[(Set[E[V]], TPSTryNode[G, V, E])]],
+                                                                   window: Queue[E[V]], t: Int)
+                                                                  (implicit pEv: ParGraph[G, V, E])  {
+
+  private implicit val matchOrd: Ordering[(Set[E[V]], TPSTryNode[G, V, E])] = Ordering.by { case(_, n) => n.support }
+
+  def factorFor(e: E[V]): Int = {
+    val (l, r) = Edge[E].vertices(e)
+    //Calculatee's edge factor and degree factors for l & r
+    val rDegFactor = Labelled[V].label(r) + 1
+    val lDegFactor = Labelled[V].label(l) + 1
+    val eFactor = Labelled[V].label(l) - Labelled[V].label(r)
+    //Calculate combined factor and new signature
+    rDegFactor * lDegFactor * eFactor
+  }
+
+  def newMatchesGiven(e: E[V]): Map[V, Set[(Set[E[V]], TPSTryNode[G, V, E])]] = {
+    //Get motif matches for both vertices in the edge
+    val (l, r) = Edge[E].vertices(e)
+    val motifMatches = (matchList.get(l) |+| matchList.get(r)).getOrElse(Set.empty[(Set[E[V]], TPSTryNode[G, V, E])])
+    //For each motif match
+    val matches = for {
+      //Get the associated TPSTry node
+      (edges, node) <- motifMatches
+      //If node has a child with factor of e then new motif!
+      c <- node.children.get(factorFor(e))
+    } yield (edges + e, c)
+    Map(l -> matches, r -> matches)
+    //TODO: Part 2 of algo around merging
+  }
 
 
   //TPSTry
   //Motif support threshold
+
+  def addToWindow(e: E[V]): List[(E[V], PartId)] = {
+
+    //Check if e is a motif, if not then assign immediately
+    motifs.root.children.get(factorFor(e))
+
+    //If window is larger than t, then dequeueOption
+    if(window.size >= t) {
+      val assignee = window.dequeueOption
+
+      //Sort motif matches and perform equal opportunism
+    } else {
+      // Add e, and work out new motif matches etc...
+
+
+      //TODO: Work through the relationship between Neighbourhoods, Edges and Vertices here.
+    }
+
+    ???
+  }
+
 
   //Either change to using a Partitioned[A] case class wrapper for partitioned element types or add a setPart method to
   //  existing partitioned typeclass
@@ -69,6 +120,8 @@ object Loom {
                                                               input: UNeighbourhood[V, E],
                                                               context: CC): (Loom[G, V, E], List[(UNeighbourhood[V, E], PartId)]) = {
 
+
+        ???
         //TODO: Implement LOOM.
       }
     }
