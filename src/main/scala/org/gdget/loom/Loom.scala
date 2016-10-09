@@ -25,6 +25,7 @@ import org.gdget.partitioned.{ParGraph, PartId, Partitioned, Partitioner}
 
 import scala.collection.{Map => AbsMap}
 import language.higherKinds
+import scala.annotation.tailrec
 import scala.collection.immutable.Queue
 
 /** The Loom graph partitioner. TODO: Expand this comment ....
@@ -39,53 +40,105 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
 
   private implicit val matchOrd: Ordering[(Set[E[V]], TPSTryNode[G, V, E])] = Ordering.by { case(_, n) => n.support }
 
-  def factorFor(e: E[V]): Int = {
+  private def factorFor(e: E[V], context: Set[E[V]]): Int = {
     val (l, r) = Edge[E].vertices(e)
-    //Calculatee's edge factor and degree factors for l & r
-    val rDegFactor = Labelled[V].label(r) + 1
-    val lDegFactor = Labelled[V].label(l) + 1
+    //Work out existing degree for l & r
+    val vertexPairs = context.map(Edge[E].vertices)
+    val lDeg = vertexPairs.count(pair => pair._1 == l || pair._2 == l)
+    val rDeg = vertexPairs.count(pair => pair._1 == r || pair._2 == r)
+
+    //Calculate's edge factor and degree factors for l & r
+    val rDegFactor = Labelled[V].label(r) + (rDeg + 1)
+    val lDegFactor = Labelled[V].label(l) + (lDeg + 1)
     val eFactor = Labelled[V].label(l) - Labelled[V].label(r)
     //Calculate combined factor and new signature
     rDegFactor * lDegFactor * eFactor
   }
 
-  def newMatchesGiven(e: E[V]): Map[V, Set[(Set[E[V]], TPSTryNode[G, V, E])]] = {
-    //Get motif matches for both vertices in the edge
-    val (l, r) = Edge[E].vertices(e)
-    val motifMatches = (matchList.get(l) |+| matchList.get(r)).getOrElse(Set.empty[(Set[E[V]], TPSTryNode[G, V, E])])
-    //For each motif match
-    val matches = for {
-      //Get the associated TPSTry node
-      (edges, node) <- motifMatches
-      //If node has a child with factor of e then new motif!
-      c <- node.children.get(factorFor(e))
-    } yield (edges + e, c)
-    Map(l -> matches, r -> matches)
-    //TODO: Part 2 of algo around merging
-  }
+  private def newMatchesGiven(e: E[V]): Map[V, Set[(Set[E[V]], TPSTryNode[G, V, E])]] = {
+    @tailrec
+    def mergeMotifs(es: Set[E[V]], node: TPSTryNode[G, V, E], matchEs: Set[E[V]]): Option[(Set[E[V]], TPSTryNode[G, V, E])] = {
+      //Only care about complete combinations of l & r motifs, sub combinations will be covered by other sub-motifs for r
+      if(es.nonEmpty) {
+        //Lazily calculate the combined factors for each edge in the r Motif, given the edges in the l Motif
+        val eFactors = es.view.map(edge => (edge, factorFor(edge, matchEs)))
+        //Find first edge in r Motif which has TPSTry node when added to l Motif
+        //Could just yield the recursive call here, but tail recursion requires if or match, not flatMap/map
+        val matchE = for {
+          (edge, factor) <- eFactors.find(f => node.children.contains(f._2))
+          c <- node.children.get(factor)
+        } yield (es - edge, c, matchEs + edge)
 
-
-  //TPSTry
-  //Motif support threshold
-
-  def addToWindow(e: E[V]): List[(E[V], PartId)] = {
-
-    //Check if e is a motif, if not then assign immediately
-    motifs.root.children.get(factorFor(e))
-
-    //If window is larger than t, then dequeueOption
-    if(window.size >= t) {
-      val assignee = window.dequeueOption
-
-      //Sort motif matches and perform equal opportunism
-    } else {
-      // Add e, and work out new motif matches etc...
-
-
-      //TODO: Work through the relationship between Neighbourhoods, Edges and Vertices here.
+        //Pattern match to enable tail rec, fold or whatever would be nicer :(
+        matchE match {
+          case Some((rM, c, lM)) => mergeMotifs(rM, c, lM)
+          case None => None
+        }
+      } else Option((matchEs, node))
     }
 
-    ???
+    def getMotifMatches(v: V, e: E[V]) = {
+      //Make sure to add root node with empty edge list to match list in order to check for base motif (w. 1 edge)
+      val nilMotif = (Set.empty[E[V]], motifs.root)
+      for {
+        //Get motif matches for v including nilMotif
+        (edges, node) <- matchList.get(v).fold(Set(nilMotif))(_ + nilMotif)
+        //If node has a child with a factor of e then new motif!
+        c <- node.children.get(factorFor(e, edges))
+      } yield (edges + e, c)
+    }
+
+    //Get motif matches for both vertices in the edge
+    val (l, r) = Edge[E].vertices(e)
+    val lMatches = getMotifMatches(l, e)
+    val rMatches = getMotifMatches(r, e)
+
+    //Now on to the merging, take l matchList + lMatches and r matchList (not rMatches)
+    val mergedMatches = for {
+      (lEdges, lNode) <- matchList.get(l).fold(lMatches)(_ ++ lMatches)
+      (rEdges,  rNode) <- matchList.getOrElse(r, Set.empty[(Set[E[V]], TPSTryNode[G, V, E])])
+      mergeMatch <- mergeMotifs(rEdges, lNode, lEdges)
+    } yield mergeMatch
+
+    val allMatches = lMatches |+| rMatches |+| mergedMatches
+    Map(l -> allMatches, r -> allMatches)
+  }
+
+  private def equalOpportunism(e: E[V], context: AbsMap[V, (PartId, _, _)]): List[(E[V], PartId)] = { ??? }
+
+  private def lDG(e: E[V], context: AbsMap[V, (PartId, _, _)]): (E[V], PartId) = { ??? }
+
+  def addToWindow(e: E[V], context: AbsMap[V, (PartId, _, _)]): (Loom[G,V,E], List[(E[V], PartId)]) = {
+
+    //Check if e is a motif, if not then assign immediately
+    if(!motifs.root.children.contains(factorFor(e, Set.empty[E[V]]))) {
+      //Assign E with LDG like heuristic
+      (this, List(lDG(e, context)))
+    } else {
+      //If e *is* a motif, then add it to the window and update matchList
+      val dWindow = window.enqueue(e)
+      val dMatchList = matchList |+| newMatchesGiven(e)
+      //Subsequently, if window is larger than t, dequeue oldest Edge and run equalOpportunism
+      if(dWindow.size >= t) {
+        dWindow.dequeueOption.fold((this.copy(matchList = dMatchList, window = dWindow), List.empty[(E[V], PartId)])) {
+          case (assignee, ddWindow) =>
+            val assignments = equalOpportunism(assignee, context)
+            //Remove all edges to be assigned from the window
+            val assignedEdges = assignments.map(_._1).toSet
+            val dddWindow = ddWindow.filterNot(assignedEdges.contains)
+            //Remove all motif matches which include assignedEdges from the matchList
+            //First remove matchList entries which belong to vertices from assignedEdges
+            val assignedVertices = assignedEdges.map(Edge[E].vertices).flatMap(p => Set(p._1, p._2))
+            //Then go through the entries for all vertices and update their sets to remove entries which include the edges
+            val ddMatchList = (dMatchList -- assignedVertices).mapValues(_.filterNot { case (matchEs, node) =>
+              matchEs.exists(assignedEdges.contains)
+            })
+            (this.copy(matchList = ddMatchList, window = dddWindow), assignments)
+        }
+      } else (this.copy(matchList = dMatchList, window = dWindow), List.empty[(E[V], PartId)])
+    }
+      //Then return Loom copy along with list of edges and partIds
+      //TODO: Work through the relationship between Neighbourhoods, Edges and Vertices here.
   }
 
 
@@ -103,10 +156,6 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
 
   //Loom will still need the AdjListBuilder as an input like LDG
   //The window can be internal though.
-
-  //Does it make sense to make the
-
-
 }
 
 object Loom {
