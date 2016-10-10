@@ -21,14 +21,16 @@ import cats._
 import cats.implicits._
 import org.gdget.Edge
 import org.gdget.data.UNeighbourhood
-import org.gdget.partitioned.{ParGraph, PartId, Partitioned, Partitioner}
+import org.gdget.partitioned._
 
 import scala.collection.{Map => AbsMap}
 import language.higherKinds
 import scala.annotation.tailrec
-import scala.collection.immutable.Queue
+import scala.collection.immutable.{Queue, SortedSet}
 
 /** The Loom graph partitioner. TODO: Expand this comment ....
+  *
+  * TOOD: Investigate making the window mutable
   *
   * @author hugofirth
   */
@@ -38,7 +40,12 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
                                                                    window: Queue[E[V]], t: Int)
                                                                   (implicit pEv: ParGraph[G, V, E])  {
 
-  private implicit val matchOrd: Ordering[(Set[E[V]], TPSTryNode[G, V, E])] = Ordering.by { case(_, n) => n.support }
+  //TODO: Make this a parameter, but sooo many parameters :( - can we ditch some?
+  private val alpha = 2
+
+  private val unused = (0 to k).map(_.part).filterNot(sizes.contains)
+
+  private val pSizes = sizes ++ unused.map(_ -> 0)
 
   private def factorFor(e: E[V], context: Set[E[V]]): Int = {
     val (l, r) = Edge[E].vertices(e)
@@ -104,16 +111,59 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     Map(l -> allMatches, r -> allMatches)
   }
 
-  private def equalOpportunism(e: E[V], context: AbsMap[V, (PartId, _, _)]): List[(E[V], PartId)] = { ??? }
+  private def equalOpportunism(e: E[V], context: AbsMap[V, (PartId, _, _)]): List[(E[V], PartId)] = {
 
-  private def lDG(e: E[V], context: AbsMap[V, (PartId, _, _)]): (E[V], PartId) = { ??? }
+    def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
+
+    def intersectionWithPart(g: Set[E[V]], part: PartId, context: AbsMap[V, (PartId, _, _)]) = {
+      //Get the vertices from a set of edges
+      val vertices = g.map(Edge[E].vertices).flatMap(edge => Set(edge._1, edge._2))
+      //Get the list of PartIds for those vertices where they are currently assigned, then count how many are == part
+      //toList call because we want more than 1 of the same PartId, so Set flatMap is dangerous
+      vertices.toList.flatMap(context.get).count(_._1 == part)
+    }
+
+    def bid(part: PartId, m: (Set[E[V]], TPSTryNode[G, V, E]), context: AbsMap[V, (PartId, _, _)]) =
+      intersectionWithPart(m._1, part, context) * (1 - (pSizes.getOrElse(part, 0).toDouble/capacity)) * m._2.support
+
+    def ration(part: (PartId, Int), smin: (PartId, Int)) = {
+      //Check that the partition whose bid is being rationed isn't smin, if it *is* then set alpha to 1
+      val a = if(part == smin) 1 else alpha
+      //Calculate and return ration l
+      (part._2/smin._2) * a
+    }
+
+    //get motif matches for edge to be assigned e
+    val (l, r) = Edge[E].vertices(e)
+    val matches = (matchList.get(l) |+| matchList.get(r)).getOrElse(Set.empty[(Set[E[V]], TPSTryNode[G, V, E])])
+    //Sort in descending order of support
+    val sortedMatches = matches.toList.sortBy({ case (_, n) => n.support })(Ordering[Int].reverse)
+    //Find the least used partition. If there are no entries in pSizes then we go with a default of 1, to avoid
+    //  divide by zero, though tbh  if pSizes is empty we have bigger problems. Need to be more systematic about my
+    //  error handling.
+    val smin = pSizes.reduceLeftOption(minUsed).getOrElse(0.part -> 1)
+    //For each partition, calculate its ration
+    val rations = pSizes.map(p => p._1 -> ration(p, smin))
+    //For each partition calculate its total bid
+    val bids = rations.map { case (pId, rtn) =>
+      val biddable = sortedMatches.take(rtn)
+      val total = biddable.foldLeft(0D){ (t, m) => t + bid(pId, m, context) }
+      pId -> (total, biddable)
+    }
+    //Find the winner and drop its score
+    val (winner, (_, winnerMotifs)) = bids.maxBy { case (pId, (score, bidMotifs)) => score }
+    //Drop the tpstry nodes, combine the edge sets in the awarded (bid on) motif matches, and map them to the winning pId
+    winnerMotifs.map(_._1).reduce(_ ++ _).map(_ -> winner).toList
+  }
+
+  private def ldg(e: E[V], context: AbsMap[V, (PartId, _, _)]): (E[V], PartId) = { ??? }
 
   def addToWindow(e: E[V], context: AbsMap[V, (PartId, _, _)]): (Loom[G,V,E], List[(E[V], PartId)]) = {
 
     //Check if e is a motif, if not then assign immediately
     if(!motifs.root.children.contains(factorFor(e, Set.empty[E[V]]))) {
       //Assign E with LDG like heuristic
-      (this, List(lDG(e, context)))
+      (this, List(ldg(e, context)))
     } else {
       //If e *is* a motif, then add it to the window and update matchList
       val dWindow = window.enqueue(e)
