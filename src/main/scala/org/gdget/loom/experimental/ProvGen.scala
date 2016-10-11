@@ -19,6 +19,7 @@ package org.gdget.loom.experimental
 
 import cats.{Eq, Show}
 import org.gdget.HPair
+import org.gdget.data.SimpleGraph
 import org.gdget.data.query.QueryBuilder
 import org.gdget.loom.experimental.Experiment.Q
 import org.gdget.partitioned._
@@ -108,10 +109,27 @@ object ProvGen {
 
     def q4 = ???
 
+    val gQ1 = SimpleGraph[Vertex, HPair](
+      Entity(1, None) -> Entity(2, None),
+      Entity(2, None) -> Entity(3, None)
+    )
+
+    val gQ2 = SimpleGraph[Vertex, HPair](
+      Agent(1, None) ->  Activity(2, None),
+      Activity(2, None) -> Entity(3, None),
+      Entity(3, None) -> Entity(4, None),
+      Entity(4, None) -> Activity(5, None),
+      Activity(5, None) -> Agent(6, None)
+    )
 
 
 
-    override def queries: Map[String, Q[Vertex, HPair]] = Map("q1" -> q1, "q2" -> q2)
+
+    override def queries: Map[String, (Q[Vertex, HPair], SimpleGraph[Vertex, HPair])] =
+      Map(
+        "q1" -> (q1, gQ1),
+        "q2" -> (q2, gQ2)
+      )
   }
 
 }

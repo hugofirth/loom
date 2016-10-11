@@ -126,6 +126,10 @@ object Main {
         adjBldr
     }
 
+  /** Tail recursive method to consume an edge stream and produce a LogicalParGraph */
+  @tailrec
+  private final def eStreamToAdj[V: Partitioned, E[_]: Edge, P] = ???
+
   /** Method describes the setup and execution of the ProvGen Loom experiment */
   def provGenExperiment(conf: Config): String = {
 

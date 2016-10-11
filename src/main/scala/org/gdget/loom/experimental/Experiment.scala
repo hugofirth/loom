@@ -28,6 +28,7 @@ import cats._
 import cats.instances.all._
 import cats.syntax.semigroup._
 import org.apache.commons.math3.random.{JDKRandomGenerator, RandomDataGenerator}
+import org.gdget.data.SimpleGraph
 
 import scala.util.Random
 
@@ -48,7 +49,7 @@ sealed trait Experiment[V, E[_]] {
   def g: LogicalParGraph[V, E]
 
   /** Map of query idenifiers to queries themselves (QueryIO objects) */
-  def queries: Map[String, Q[V, E]]
+  def queries: Map[String, (Q[V, E], SimpleGraph[V, E])]
 
   /** Stream of queries made up from the values from `queries`.
     * 
@@ -137,7 +138,7 @@ sealed trait Experiment[V, E[_]] {
     import Experiment._
     import LogicalParGraph._
 
-    val resultStream = qs.take(n).map { q =>
+    val resultStream = qs.take(n).map { case (q ,gq) =>
       val timedQ = time { graph =>     
         val interpreter = countingInterpreterK[Future, V, E]
         val query = q.transKWith[Future](interpreter).run(graph)
@@ -154,7 +155,7 @@ sealed trait Experiment[V, E[_]] {
   /** Simple method to test each of the specified queries in the experiment against the experiment's graph and print
     * the results to std out (should probably make this a bit better, but needs must when the devil calls)
     */
-  def trial(): Unit = queries.foreach { case (key, q) =>
+  def trial(): Unit = queries.foreach { case (key, (q, gq)) =>
     println(s"Testing query $key")
     val result = q.transK[Id].run(g)
     println(s"Printing result $result")
@@ -169,7 +170,7 @@ object Experiment {
   // than metadata for the execution of each query from the interpreter. If was wanted to use the results we would have
   // have to do something smarter here, or just fix the query return type.
   type Q[V, E[_]] = QueryIO[LogicalParGraph, V, E, _]
-  type QStream[V, E[_]] = Stream[Q[V, E]]
+  type QStream[V, E[_]] = Stream[(Q[V, E], SimpleGraph[V, E])]
 
   /** Result case class, which takes Time and IPT at a minimum */
   case class Result(time: Long, ipt: Int)
@@ -195,13 +196,13 @@ object Experiment {
 /** Utility trait to be extended for each experiment to provide a "Meta" trait which carries all experiment info (like
   * dataset and workload queries) and may be mixed back into the Experiment ADT objects above.
   */
-trait ExperimentMeta[V, E[_]] {
+trait ExperimentMeta[V, E[_]] { self: Experiment[V, E] =>
 
   import Experiment._
 
   def g: LogicalParGraph[V, E]
 
-  def queries: Map[String, Q[V, E]]
+  def queries: Map[String, (Q[V, E], SimpleGraph[V, E])]
 }
 
 
