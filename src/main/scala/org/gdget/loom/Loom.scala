@@ -23,7 +23,7 @@ import org.gdget.Edge
 import org.gdget.data.UNeighbourhood
 import org.gdget.partitioned._
 
-import scala.collection.{Map => AbsMap}
+import scala.collection.{Map => AbsMap, Set => AbsSet}
 import language.higherKinds
 import scala.annotation.tailrec
 import scala.collection.immutable.{Queue, SortedSet}
@@ -39,6 +39,8 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
                                                                    matchList: Map[V, Set[(Set[E[V]], TPSTryNode[G, V, E])]],
                                                                    window: Queue[E[V]], t: Int, alpha: Int)
                                                                   (implicit pEv: ParGraph[G, V, E])  {
+
+  import Loom._
 
   private val unused = (0 to k).map(_.part).filterNot(sizes.contains)
 
@@ -108,7 +110,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     Map(l -> allMatches, r -> allMatches)
   }
 
-  private def equalOpportunism(e: E[V], context: AbsMap[V, (PartId, _, _)]): List[(E[V], PartId)] = {
+  private def equalOpportunism(e: E[V], context: AdjBuilder[V]): List[(E[V], PartId)] = {
 
     def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
 
@@ -153,15 +155,23 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     winnerMotifs.map(_._1).reduce(_ ++ _).map(_ -> winner).toList
   }
 
-  private def ldg(e: E[V], context: AbsMap[V, (PartId, _, _)]): (E[V], PartId) = {
+  private def ldg(e: E[V], context: AdjBuilder[V]): (E[V], PartId) = {
     //TODO: The below relies heavily on assumptions about how the context AdjList is built, make sure they're correct
+    def neighbourPartitions(v: V) = context.get(v).fold(List.empty[PartId]) { case (pId, in, out) =>
+      pId :: (in.keySet ++ out.keySet).toList.flatMap(context.get).map(_._1)
+    }
+
     //Get the vertices from e
     val (l,r) = Edge[E].vertices(e)
     //Get the adjLists of e's vertices from context if they exist
-
+    val parts = neighbourPartitions(l) ++ neighbourPartitions(r)
+    //find the most common part
+    val common = parts.groupBy(identity).mapValues(_.size).maxBy(_._2)._1
+    //return edge, common partId
+    (e, common)
   }
 
-  def addToWindow(e: E[V], context: AbsMap[V, (PartId, _, _)]): (Loom[G,V,E], List[(E[V], PartId)]) = {
+  def addToWindow(e: E[V], context: AdjBuilder[V]): (Loom[G,V,E], List[(E[V], PartId)]) = {
 
     //Check if e is a motif, if not then assign immediately
     if(!motifs.root.children.contains(factorFor(e, Set.empty[E[V]]))) {
@@ -213,18 +223,23 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
 
 object Loom {
 
-  implicit def loomPartitioner[G[_, _[_]], V: Partitioned, E[_]: Edge](implicit gEv: ParGraph[G, V, E]) =
-    new Partitioner[Loom[G, V, E], UNeighbourhood[V, E], AbsMap[V, (PartId, _, _)], List] {
+  type AdjBuilder[V] = AbsMap[V, (PartId, AbsMap[V, Set[Unit]], AbsMap[V, Set[Unit]])]
+
+  //TODO: In the rush to finish this we've lost some of the nice generalisation, try to add it back in later
+  implicit def loomPartitioner[G[_, _[_]], V: Partitioned: Labelled, E[_]: Edge](implicit gEv: ParGraph[G, V, E]) =
+    new Partitioner[Loom[G, V, E], E[V], AdjBuilder[V], List] {
 
       override implicit def F = Foldable[List]
 
-      override def partition[CC <: AbsMap[V, (PartId, _, _)]](partitioner: Loom[G, V, E],
-                                                              input: UNeighbourhood[V, E],
-                                                              context: CC): (Loom[G, V, E], List[(UNeighbourhood[V, E], PartId)]) = {
+      override def partition[CC <: AdjBuilder[V]](partitioner: Loom[G, V, E], input: E[V],
+                                                  context: CC): (Loom[G, V, E], List[(E[V], PartId)]) = {
 
-
-        ???
-        //TODO: Implement LOOM.
+        //Partition the edge
+        val (part, assignments) = partitioner.addToWindow(input, context)
+        //Update sizes
+        val sizeDeltas = assignments.groupBy(_._2).mapValues(_.size)
+        val dSizes = part.sizes |+| sizeDeltas
+        (part.copy(sizes = dSizes), assignments)
       }
     }
 }
