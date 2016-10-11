@@ -37,11 +37,8 @@ import scala.collection.immutable.{Queue, SortedSet}
 case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int, sizes: Map[PartId, Int], k: Int,
                                                                    motifs: TPSTry[G, V, E],
                                                                    matchList: Map[V, Set[(Set[E[V]], TPSTryNode[G, V, E])]],
-                                                                   window: Queue[E[V]], t: Int)
+                                                                   window: Queue[E[V]], t: Int, alpha: Int)
                                                                   (implicit pEv: ParGraph[G, V, E])  {
-
-  //TODO: Make this a parameter, but sooo many parameters :( - can we ditch some?
-  private val alpha = 2
 
   private val unused = (0 to k).map(_.part).filterNot(sizes.contains)
 
@@ -156,7 +153,13 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     winnerMotifs.map(_._1).reduce(_ ++ _).map(_ -> winner).toList
   }
 
-  private def ldg(e: E[V], context: AbsMap[V, (PartId, _, _)]): (E[V], PartId) = { ??? }
+  private def ldg(e: E[V], context: AbsMap[V, (PartId, _, _)]): (E[V], PartId) = {
+    //TODO: The below relies heavily on assumptions about how the context AdjList is built, make sure they're correct
+    //Get the vertices from e
+    val (l,r) = Edge[E].vertices(e)
+    //Get the adjLists of e's vertices from context if they exist
+
+  }
 
   def addToWindow(e: E[V], context: AbsMap[V, (PartId, _, _)]): (Loom[G,V,E], List[(E[V], PartId)]) = {
 
