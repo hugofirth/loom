@@ -75,6 +75,8 @@ object ProvGen {
     implicit val pGVEq = new Eq[Vertex] {
       override def eqv(x: Vertex, y: Vertex): Boolean = x.equals(y)
     }
+
+    //TODO: implement Labelled TC for Vertex
   }
 
   /** Trait containing information needed for running ProvGen experiments, including graph location and queries */

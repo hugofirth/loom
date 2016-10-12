@@ -35,9 +35,9 @@ import scala.collection.immutable.{Queue, SortedSet}
   * @author hugofirth
   */
 case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int, sizes: Map[PartId, Int], k: Int,
-                                                                   motifs: TPSTry[G, V, E],
-                                                                   matchList: Map[V, Set[(Set[E[V]], TPSTryNode[G, V, E])]],
-                                                                   window: Queue[E[V]], t: Int, alpha: Int)
+                                                                   motifs: TPSTry[V, E],
+                                                                   matchList: Map[V, Set[(Set[E[V]], TPSTryNode[V, E])]],
+                                                                   window: Queue[E[V]], t: Int, alpha: Int, prime: Int)
                                                                   (implicit pEv: ParGraph[G, V, E])  {
 
   import Loom._
@@ -45,6 +45,8 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
   private val unused = (0 to k).map(_.part).filterNot(sizes.contains)
 
   private val pSizes = sizes ++ unused.map(_ -> 0)
+
+  private def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
 
   private def factorFor(e: E[V], context: Set[E[V]]): Int = {
     val (l, r) = Edge[E].vertices(e)
@@ -54,16 +56,16 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     val rDeg = vertexPairs.count(pair => pair._1 == r || pair._2 == r)
 
     //Calculate's edge factor and degree factors for l & r
-    val rDegFactor = Labelled[V].label(r) + (rDeg + 1)
-    val lDegFactor = Labelled[V].label(l) + (lDeg + 1)
-    val eFactor = Labelled[V].label(l) - Labelled[V].label(r)
+    val rDegFactor = (Labelled[V].label(r) + (rDeg + 1)).abs % prime
+    val lDegFactor = (Labelled[V].label(l) + (lDeg + 1)).abs % prime
+    val eFactor = (Labelled[V].label(l) - Labelled[V].label(r)).abs % prime
     //Calculate combined factor and new signature
     rDegFactor * lDegFactor * eFactor
   }
 
-  private def newMatchesGiven(e: E[V]): Map[V, Set[(Set[E[V]], TPSTryNode[G, V, E])]] = {
+  private def newMatchesGiven(e: E[V]): Map[V, Set[(Set[E[V]], TPSTryNode[V, E])]] = {
     @tailrec
-    def mergeMotifs(es: Set[E[V]], node: TPSTryNode[G, V, E], matchEs: Set[E[V]]): Option[(Set[E[V]], TPSTryNode[G, V, E])] = {
+    def mergeMotifs(es: Set[E[V]], node: TPSTryNode[V, E], matchEs: Set[E[V]]): Option[(Set[E[V]], TPSTryNode[V, E])] = {
       //Only care about complete combinations of l & r motifs, sub combinations will be covered by other sub-motifs for r
       if(es.nonEmpty) {
         //Lazily calculate the combined factors for each edge in the r Motif, given the edges in the l Motif
@@ -102,7 +104,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     //Now on to the merging, take l matchList + lMatches and r matchList (not rMatches)
     val mergedMatches = for {
       (lEdges, lNode) <- matchList.get(l).fold(lMatches)(_ ++ lMatches)
-      (rEdges,  rNode) <- matchList.getOrElse(r, Set.empty[(Set[E[V]], TPSTryNode[G, V, E])])
+      (rEdges,  rNode) <- matchList.getOrElse(r, Set.empty[(Set[E[V]], TPSTryNode[V, E])])
       mergeMatch <- mergeMotifs(rEdges, lNode, lEdges)
     } yield mergeMatch
 
@@ -112,8 +114,6 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
 
   private def equalOpportunism(e: E[V], context: AdjBuilder[V]): List[(E[V], PartId)] = {
 
-    def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
-
     def intersectionWithPart(g: Set[E[V]], part: PartId, context: AbsMap[V, (PartId, _, _)]) = {
       //Get the vertices from a set of edges
       val vertices = g.map(Edge[E].vertices).flatMap(edge => Set(edge._1, edge._2))
@@ -122,7 +122,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
       vertices.toList.flatMap(context.get).count(_._1 == part)
     }
 
-    def bid(part: PartId, m: (Set[E[V]], TPSTryNode[G, V, E]), context: AbsMap[V, (PartId, _, _)]) =
+    def bid(part: PartId, m: (Set[E[V]], TPSTryNode[V, E]), context: AbsMap[V, (PartId, _, _)]) =
       intersectionWithPart(m._1, part, context) * (1 - (pSizes.getOrElse(part, 0).toDouble/capacity)) * m._2.support
 
     def ration(part: (PartId, Int), smin: (PartId, Int)) = {
@@ -134,7 +134,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
 
     //get motif matches for edge to be assigned e
     val (l, r) = Edge[E].vertices(e)
-    val matches = (matchList.get(l) |+| matchList.get(r)).getOrElse(Set.empty[(Set[E[V]], TPSTryNode[G, V, E])])
+    val matches = (matchList.get(l) |+| matchList.get(r)).getOrElse(Set.empty[(Set[E[V]], TPSTryNode[V, E])])
     //Sort in descending order of support
     val sortedMatches = matches.toList.sortBy({ case (_, n) => n.support })(Ordering[Int].reverse)
     //Find the least used partition. If there are no entries in pSizes then we go with a default of 1, to avoid
@@ -165,8 +165,11 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     val (l,r) = Edge[E].vertices(e)
     //Get the adjLists of e's vertices from context if they exist
     val parts = neighbourPartitions(l) ++ neighbourPartitions(r)
-    //find the most common part
-    val common = parts.groupBy(identity).mapValues(_.size).maxBy(_._2)._1
+    //find the most common part or the least used partition
+    val common = parts match {
+      case ps @ hd :: tl => ps.groupBy(identity).mapValues(_.size).maxBy(_._2)._1
+      case Nil => pSizes.reduceLeftOption(minUsed).map(_._1).getOrElse(0.part)
+    }
     //return edge, common partId
     (e, common)
   }

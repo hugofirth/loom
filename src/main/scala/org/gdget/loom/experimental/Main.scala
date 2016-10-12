@@ -25,8 +25,8 @@ import cats.implicits._
 import jawn.ParseException
 import jawn.ast.JValue
 import org.gdget._
-import org.gdget.data.UNeighbourhood
-import org.gdget.loom.GraphReader
+import org.gdget.data.{SimpleGraph, UNeighbourhood}
+import org.gdget.loom._
 import org.gdget.loom.experimental.Experiment._
 import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, Vertex => ProvGenVertex}
 import org.gdget.partitioned._
@@ -34,10 +34,12 @@ import org.gdget.partitioned.data._
 import org.gdget.std.all._
 
 import scala.annotation.tailrec
+import scala.collection.immutable.Queue
 import scala.collection.{mutable, Map => AbsMap}
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext}
 import scala.language.higherKinds
+import scala.util.Random
 
 /** Entry point for the Loom experiments
   *
@@ -50,19 +52,19 @@ object Main {
   type AdjListBuilder[V] = mutable.Map[V, (PartId, Map[V, Set[Unit]], Map[V, Set[Unit]])]
   import LogicalParGraph._
 
-  private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
-                                                size: Int)
+  val qSeed = 12738419
 
+  private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
+                                                size: Int, prime: Int)
 
   def main(args: Array[String]): Unit = {
 
     //TEST
     val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
-      rand = base + "provgen_rand_1000.json", stoch = "", numK = 32, size = 500012)
+      rand = base + "provgen_rand_1000.json", stoch = "", numK = 8, size = 500012, prime = 251)
     provGenExperiment(conf)
     // /TEST
-
 
   }
 
@@ -128,10 +130,57 @@ object Main {
 
   /** Tail recursive method to consume an edge stream and produce a LogicalParGraph */
   @tailrec
-  private final def eStreamToAdj[V: Partitioned, E[_]: Edge, P] = ???
+  private final def eStreamToAdj[V: Partitioned, E[_]: Edge, P](es: Stream[E[V]], adjBldr: AdjListBuilder[V], p: P)
+                                                               (implicit pEv: Partitioner[P, E[V], AdjListBuilder[V], List]): AdjListBuilder[V] = {
+    //Match over edge stream
+    es match {
+      case hd #:: tl =>
+        //Submit edge to be partitioned and accept a list of already partitioned edges (as we expect this partitioner to
+        //  be windowed. Should probably represent that explicitly in types ...
+        val (dP, partitioned) = pEv.partition(p, hd, adjBldr)
+        //Add partitioned edges to adjBldr
+        val dAdj = partitioned.foldLeft(adjBldr) { (adj, p) =>
+          //Get the edge's constituent vertices
+          val (e, ePart) = p
+          val (l,r) = Edge[E].vertices(e)
+          //For each vertex, find if they exist
+          //If a vertex already exists, merely add the other vertex as a neighbour, the r vertex is an out neighbour of
+          // the l vertex and visa versa
+          val lN = adj.get(l).fold((ePart, Map.empty[V, Set[Unit]], Map(r -> Set(())))) { case (pId, in, out) =>
+            (pId, in, out + (r -> Set(())))
+          }
+          val rN = adj.get(r).fold((ePart, Map(l -> Set(())), Map.empty[V, Set[Unit]])) { case (pId, in, out) =>
+            (pId, in + (l -> Set(())), out)
+          }
+          //Update the adjBldr - mutability I know :|
+          adj.update(l, lN)
+          adj.update(r, rN)
+          adj
+        }
+        //Once we have updated the adjBldr for this round of assignments, move on to the next edge in the stream
+        eStreamToAdj(tl, dAdj, dP)
+      case _ =>
+        //If the edge stream is empty, just return the adj which we have built so far
+        adjBldr
+    }
+
+  }
 
   /** Method describes the setup and execution of the ProvGen Loom experiment */
   def provGenExperiment(conf: Config): String = {
+
+    //Create the Labelled Instance for ProvGenVertex. Doing it here means we have access to the prime value passed in
+    //  conf, but it still feels horrible. This whole file needs to be sorted, split out etc...
+    implicit val pgVLabelled = new Labelled[ProvGenVertex] {
+
+      val labels = Random.shuffle((1 until conf.prime).toVector).take(3)
+
+      override def label(a: ProvGenVertex): Int = a match {
+        case Entity(_, _) => labels(0)
+        case Agent(_, _) => labels(1)
+        case Activity(_, _) => labels(2)
+      }
+    }
 
     def time = Calendar.getInstance.getTime.toString
 
@@ -146,7 +195,6 @@ object Main {
         Left(s"Unrecognised vertex label $other")
     }
 
-    //TODO: Fix/Flip parsing bug!!
     val eToV: (String, Int, Direction) => Either[String, ProvGenVertex] = {
       case ("WASDERIVEDFROM", id, _) =>
         Right(Entity(id.toInt, None))
@@ -162,6 +210,54 @@ object Main {
 
     println(s"Start reading in json @ $time")
 
+    def altPartitioning(neighbours: Stream[UNeighbourhood[ProvGenVertex, HPair]]) = {
+
+      //Given Stream of neighbourhoods, for each partitioner
+      import Partitioners._
+
+      println(s"Create the partitioner @ $time")
+
+      //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
+      // of the graph (conf value) as well as k (number of partitions)
+      val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
+      //        val p = HashPartitioner(conf.numK, 0.part)
+      println(s"Start parsing json in to graph @ $time")
+
+      //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
+      // partitions to the adjacency matrix at each step.
+      // This will produce a LogicalParGraph and exhaust the stream
+      val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
+      //TODO: Clean up Partitioner typeclass
+      val adj = nStreamToAdj(neighbours, bldr, p)
+      LogicalParGraph.fromAdjList[ProvGenVertex, HPair](adj.toMap)
+    }
+
+    def loomPartitioning(edges: Stream[HPair[ProvGenVertex]]) = {
+
+      println(s"Create the partitioner @ $time")
+
+      //Bit of a hack (ok a lot of a hack)
+      //We need the motifs before we can create the graph so we need to create the experiment with an empty graph and then
+      // create a query stream with the same seed in this method and in the nStream fold
+      //TODO: Make this a little more principled by making many of the methods on Experiment static
+
+      //TODO: Pull G out of top level TPSTry/Node definition. Its not needed.
+      val hackExp = ProvGenExperiment(LogicalParGraph.empty[ProvGenVertex, HPair])
+      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.7, "q2" -> 0.3))
+      val trie = qStream.take(10).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair](conf.prime)) { (trie, g) => trie.add(g) }
+      val motifs = trie.motifsFor(0.5)
+
+      //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
+      val p = Loom[LogicalParGraph, ProvGenVertex, HPair](conf.size/conf.numK, Map.empty[PartId, Int], conf.numK,
+        motifs, Map.empty[ProvGenVertex, Set[(Set[HPair[ProvGenVertex]], TPSTryNode[ProvGenVertex, HPair])]],
+        Queue.empty[HPair[ProvGenVertex]], 10000, 2, conf.prime)
+
+
+      val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
+      val adj = eStreamToAdj(edges, bldr, p)
+      LogicalParGraph.fromAdjList[ProvGenVertex, HPair](adj.toMap)
+    }
+
     //For each stream order
     List(conf.dfs, conf.bfs, conf.rand).map { order =>
       //Get json dump = - create Stream[UNeighbourhood[ProvGenVertex, HPair]] with GraphReader
@@ -173,24 +269,8 @@ object Main {
         error
       }, {neighbours =>
 
-        //Given Stream of neighbourhoods, for each partitioner
-        import Partitioners._
-
-        println(s"Create the partitioner @ $time")
-
-        //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
-        // of the graph (conf value) as well as k (number of partitions)
-        val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
-//        val p = HashPartitioner(conf.numK, 0.part)
-        println(s"Start parsing json in to graph @ $time")
-
-        //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
-        // partitions to the adjacency matrix at each step.
-        // This will produce a LogicalParGraph and exhaust the stream
-        val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
-        //TODO: Clean up Partitioner typeclass
-        val adj = nStreamToAdj(neighbours, bldr, p)
-        val g = LogicalParGraph.fromAdjList[ProvGenVertex, HPair](adj.toMap)
+//        val g = altPartitioning(neighbours)
+        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")
@@ -208,7 +288,7 @@ object Main {
         exp.trial()
 
         //Run the experiment
-        val results = exp.run(10, exp.periodicQueryStream(12738419))
+        val results = exp.run(10, exp.fixedQueryStream(qSeed, Map("q1" -> 0.7, "q2" -> 0.3)))
 
         println(s"Finish running experiment @ $time")
 
@@ -216,7 +296,7 @@ object Main {
         import ExecutionContext.Implicits.global
         results.onSuccess {
           case Result(t, ipt) => println(s"A ${conf.numK}-way partitioning of the ProvGen graph, generated using " +
-            s"LDGPartitioner, suffered $ipt when executing its workload over $t seconds")
+            s"Loom, suffered $ipt when executing its workload over $t seconds")
         }
 
         Await.result(results, Duration.Inf)
