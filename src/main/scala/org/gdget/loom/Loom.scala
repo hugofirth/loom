@@ -56,9 +56,9 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     val rDeg = vertexPairs.count(pair => pair._1 == r || pair._2 == r)
 
     //Calculate's edge factor and degree factors for l & r
-    val rDegFactor = (Labelled[V].label(r) + (rDeg + 1)).abs % prime
-    val lDegFactor = (Labelled[V].label(l) + (lDeg + 1)).abs % prime
-    val eFactor = (Labelled[V].label(l) - Labelled[V].label(r)).abs % prime
+    val rDegFactor = ((Labelled[V].label(r) + (rDeg + 1)).abs % prime) + 1
+    val lDegFactor = ((Labelled[V].label(l) + (lDeg + 1)).abs % prime) + 1
+    val eFactor = ((Labelled[V].label(l) - Labelled[V].label(r)).abs % prime) + 1
     //Calculate combined factor and new signature
     rDegFactor * lDegFactor * eFactor
   }
@@ -165,6 +165,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     val (l,r) = Edge[E].vertices(e)
     //Get the adjLists of e's vertices from context if they exist
     val parts = neighbourPartitions(l) ++ neighbourPartitions(r)
+    //TODO: add the negative weighting to make this actually like LDG
     //find the most common part or the least used partition
     val common = parts match {
       case ps @ hd :: tl => ps.groupBy(identity).mapValues(_.size).maxBy(_._2)._1
@@ -181,6 +182,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
       //Assign E with LDG like heuristic
       (this, List(ldg(e, context)))
     } else {
+
       //If e *is* a motif, then add it to the window and update matchList
       val dWindow = window.enqueue(e)
       val dMatchList = matchList |+| newMatchesGiven(e)

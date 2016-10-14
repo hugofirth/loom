@@ -243,14 +243,16 @@ object Main {
 
       //TODO: Pull G out of top level TPSTry/Node definition. Its not needed.
       val hackExp = ProvGenExperiment(LogicalParGraph.empty[ProvGenVertex, HPair])
-      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.7, "q2" -> 0.3))
-      val trie = qStream.take(10).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair](conf.prime)) { (trie, g) => trie.add(g) }
+      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.5, "q2" -> 0.5))
+      val trie = qStream.take(30).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair](conf.prime)) { (trie, g) =>
+        trie.add(g)
+      }
       val motifs = trie.motifsFor(0.5)
 
       //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
       val p = Loom[LogicalParGraph, ProvGenVertex, HPair](conf.size/conf.numK, Map.empty[PartId, Int], conf.numK,
         motifs, Map.empty[ProvGenVertex, Set[(Set[HPair[ProvGenVertex]], TPSTryNode[ProvGenVertex, HPair])]],
-        Queue.empty[HPair[ProvGenVertex]], 10000, 2, conf.prime)
+        Queue.empty[HPair[ProvGenVertex]], 30000, 2, conf.prime)
 
 
       val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
@@ -269,6 +271,8 @@ object Main {
         error
       }, {neighbours =>
 
+
+        //TODO: Fix bug in TPSTry
 //        val g = altPartitioning(neighbours)
         val g = loomPartitioning(neighbours.flatMap(_.inEdges))
 

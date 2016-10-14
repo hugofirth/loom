@@ -149,38 +149,40 @@ sealed trait TPSTryNode[V, E[_]] { self =>
 
     def corecurse(parent: TPSTryNode[V, E], es: Set[E[V]], depth: Int, sigs: SigTable[V, E]): TPSTryNode[V, E] = {
 
-      //Get set of vertices from set of neighbours
+      //Get set of vertices from set of edges, or initial graph
       val vs = if (es.isEmpty)
         Graph[G, V, E].vertices(graph).toSet
       else
-        es.flatMap(e => Edge[E].vertices(e)._1 :: Edge[E].vertices(e)._2 :: Nil)
+        es.flatMap { e =>
+          val (l, r) = Edge[E].vertices(e)
+          l :: r :: Nil
+        }
 
       //Get the set of all edges incident to es, including es
       val neighbourhoods = vs.flatMap(Graph[G, V, E].neighbourhood(graph, _))
       //Remove es to get the set of edges which are incident to es but not *in* es
       val ns = neighbourhoods.flatMap(_.edges) &~ es
-      //Fold Left over each indicent edge en
+      //Fold Left over each incident edge en
       ns.foldLeft(parent) { (p, en) =>
         //Initialise sigsTable at this depth if it doesn't exist yet
         if(sigs.size <= depth) sigs += mutable.HashMap.empty[BigInt, NodeBuilder[V, E]]
         // Calculate factor of en
         val (l, r) = Edge[E].vertices(en)
-        //TODO:  Fix factor calculations to do degree as well
         //Create simplegraph from parent repr
-        val pG = SimpleGraph(parent.repr.toSeq:_*)
+        val pG = SimpleGraph((es + en).toSeq:_*)
         //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
         val lD = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
         val rD = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
         //Calculate the new degree factor for both l & r
-        val rDegFactor = (Labelled[V].label(r) + (rD + 1)).abs % prime
-        val lDegFactor = (Labelled[V].label(l) + (lD + 1)).abs % prime
-        val eFactor = (Labelled[V].label(l) - Labelled[V].label(r)).abs % prime
+        val rDegFactor = ((Labelled[V].label(r) + (rD + 1)).abs % prime) + 1
+        val lDegFactor = ((Labelled[V].label(l) + (lD + 1)).abs % prime) + 1
+        val eFactor = ((Labelled[V].label(l) - Labelled[V].label(r)).abs % prime) + 1
         //Calculate combined factor and new signature
         val factor = rDegFactor * lDegFactor * eFactor
         val enSig = factor * p.signature
         //create a builder if one is not found in sigTable with same signature and size
         val b = (sigs(depth).get(enSig), p.children.get(factor)) match {
-          case (Some(existing), _) => existing.support += 1; existing
+          case (Some(existing), _) => existing
           case (None, Some(c)) => NodeBuilder(c.repr, c.support + 1, c.signature, c.children)
           case _ => NodeBuilder(es + en, 1, enSig, Map.empty[Factor, TPSTryNode[V, E]])
         }
@@ -201,7 +203,7 @@ sealed trait TPSTryNode[V, E[_]] { self =>
 
 
     //TODO: Fix for depth 0/1, never actually adds single edges to the trie
-    val edges = Graph[G, V, E].edges(graph)
+//    val edges = Graph[G, V, E].edges(graph)
     val sigTable = mutable.ArrayBuffer.empty[mutable.HashMap[BigInt, NodeBuilder[V, E]]]
     val trieBldr = corecurse(self, Set.empty[E[V]], 0, sigTable)
 
@@ -211,7 +213,7 @@ sealed trait TPSTryNode[V, E[_]] { self =>
 //      corecurse(trie, Set(edge), 0, sigTable)
 //    }
 
-    self.build()
+    trieBldr.build()
   }
 
 
