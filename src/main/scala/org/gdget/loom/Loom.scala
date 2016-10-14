@@ -23,7 +23,7 @@ import org.gdget.{Edge, Graph}
 import org.gdget.data.{SimpleGraph, UNeighbourhood}
 import org.gdget.partitioned._
 
-import scala.collection.{Map => AbsMap, Set => AbsSet}
+import scala.collection.{mutable, Map => AbsMap, Set => AbsSet}
 import language.higherKinds
 import scala.annotation.tailrec
 import scala.collection.immutable.{Queue, SortedSet}
@@ -34,17 +34,14 @@ import scala.collection.immutable.{Queue, SortedSet}
   *
   * @author hugofirth
   */
-case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int, sizes: Map[PartId, Int], k: Int,
-                                                                   motifs: TPSTry[V, E],
-                                                                   matchList: Map[V, Set[(Set[E[V]], TPSTryNode[V, E])]],
-                                                                   window: Queue[E[V]], t: Int, alpha: Int, prime: Int)
-                                                                  (implicit pEv: ParGraph[G, V, E])  {
+final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge] private (capacity: Int, pSizes: Map[PartId, Int], k: Int,
+                                                                             motifs: TPSTry[V, E],
+                                                                             matchList: Map[V, Set[(Set[E[V]], TPSTryNode[V, E])]],
+                                                                             window: mutable.LinkedHashSet[E[V]],
+                                                                             t: Int, alpha: Int, prime: Int)
+                                                                            (implicit pEv: ParGraph[G, V, E])  {
 
   import Loom._
-
-  private val unused = (0 to k).map(_.part).filterNot(sizes.contains)
-
-  private val pSizes = sizes ++ unused.map(_ -> 0)
 
   private def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
 
@@ -203,7 +200,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
       (this, List(ldg(e, context)))
     } else {
       //If e *is* a motif, then add it to the window and update matchList
-      val dWindow = window.enqueue(e)
+      val dWindow = window += e
       val dMatchList = matchList |+| newMatchesGiven(e)
       //Subsequently, if window is larger than t, dequeue oldest Edge and run equalOpportunism
       if(dWindow.size >= t) {
@@ -234,6 +231,16 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
 object Loom {
 
   type AdjBuilder[V] = AbsMap[V, (PartId, AbsMap[V, Set[Unit]], AbsMap[V, Set[Unit]])]
+
+  def apply[G[_, _[_]], V: Partitioned: Labelled, E[_]: Edge](capacity:Int, k: Int, motifs: TPSTry[V, E], t: Int,
+                                                              alpha: Int, prime: Int)
+                                                             (implicit pEv: ParGraph[G, V, E]): Loom[G, V, E] = {
+
+    val emptyMatchList = Map.empty[V, Set[(Set[E[V]], TPSTryNode[V, E])]]
+    val emptyWindow = mutable.LinkedHashSet.empty[E[V]]
+    new Loom[G, V, E](capacity, (0 until k).map(_.part -> 0).toMap, k, motifs, emptyMatchList, emptyWindow, t, alpha, prime)
+
+  }
 
   //TODO: In the rush to finish this we've lost some of the nice generalisation, try to add it back in later
   implicit def loomPartitioner[G[_, _[_]], V: Partitioned: Labelled, E[_]: Edge](implicit gEv: ParGraph[G, V, E]) =

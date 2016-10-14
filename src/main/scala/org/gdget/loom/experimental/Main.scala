@@ -177,7 +177,7 @@ object Main {
     //  conf, but it still feels horrible. This whole file needs to be sorted, split out etc...
     implicit val pgVLabelled = new Labelled[ProvGenVertex] {
 
-      val labels = Random.shuffle((1 until conf.prime).toVector).take(3)
+      val labels = Random.shuffle((0 until conf.prime).toVector).take(3)
 
       override def label(a: ProvGenVertex): Int = a match {
         case Entity(_, _) => labels(0)
