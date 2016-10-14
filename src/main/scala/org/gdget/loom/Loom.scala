@@ -19,8 +19,8 @@ package org.gdget.loom
 
 import cats._
 import cats.implicits._
-import org.gdget.Edge
-import org.gdget.data.UNeighbourhood
+import org.gdget.{Edge, Graph}
+import org.gdget.data.{SimpleGraph, UNeighbourhood}
 import org.gdget.partitioned._
 
 import scala.collection.{Map => AbsMap, Set => AbsSet}
@@ -51,9 +51,11 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
   private def factorFor(e: E[V], context: Set[E[V]]): Int = {
     val (l, r) = Edge[E].vertices(e)
     //Work out existing degree for l & r
-    val vertexPairs = context.map(Edge[E].vertices)
-    val lDeg = vertexPairs.count(pair => pair._1 == l || pair._2 == l)
-    val rDeg = vertexPairs.count(pair => pair._1 == r || pair._2 == r)
+    //Create simplegraph from parent repr
+    val pG = SimpleGraph((context + e).toSeq:_*)
+    //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
+    val lDeg = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
+    val rDeg = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
 
     //Calculate's edge factor and degree factors for l & r
     val rDegFactor = ((Labelled[V].label(r) + (rDeg + 1)).abs % prime) + 1
@@ -112,6 +114,24 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     Map(l -> allMatches, r -> allMatches)
   }
 
+  def intersectionWithPart(g: Set[E[V]], part: PartId, context: AbsMap[V, (PartId, _, _)]) = {
+    //Get the vertices from a set of edges
+    val vertices = g.map(Edge[E].vertices).flatMap(edge => Set(edge._1, edge._2))
+    //Get the list of PartIds for those vertices where they are currently assigned, then count how many are == part
+    //toList call because we want more than 1 of the same PartId, so Set flatMap is dangerous
+    vertices.toList.flatMap(context.get).count(_._1 == part)
+  }
+
+  def bid(part: PartId, m: (Set[E[V]], TPSTryNode[V, E]), context: AbsMap[V, (PartId, _, _)]) =
+    intersectionWithPart(m._1, part, context) * (1 - (pSizes.getOrElse(part, 0).toDouble/capacity)) * m._2.support
+
+  def ration(part: (PartId, Int), smin: (PartId, Int)) = {
+    //Check that the partition whose bid is being rationed isn't smin, if it *is* then set alpha to 1
+    val a = if(part == smin) 1 else alpha
+    //Calculate and return ration l
+    (part._2/smin._2) * a
+  }
+
   private def equalOpportunism(e: E[V], context: AdjBuilder[V]): List[(E[V], PartId)] = {
 
     def intersectionWithPart(g: Set[E[V]], part: PartId, context: AbsMap[V, (PartId, _, _)]) = {
@@ -152,7 +172,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     //Find the winner and drop its score
     val (winner, (_, winnerMotifs)) = bids.maxBy { case (pId, (score, bidMotifs)) => score }
     //Drop the tpstry nodes, combine the edge sets in the awarded (bid on) motif matches, and map them to the winning pId
-    winnerMotifs.map(_._1).reduce(_ ++ _).map(_ -> winner).toList
+    winnerMotifs.map(_._1).reduceOption(_ ++ _).fold(List.empty[E[V]])(_.toList).map(_ -> winner)
   }
 
   private def ldg(e: E[V], context: AdjBuilder[V]): (E[V], PartId) = {
@@ -182,7 +202,6 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
       //Assign E with LDG like heuristic
       (this, List(ldg(e, context)))
     } else {
-
       //If e *is* a motif, then add it to the window and update matchList
       val dWindow = window.enqueue(e)
       val dMatchList = matchList |+| newMatchesGiven(e)
@@ -192,10 +211,13 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
           case (assignee, ddWindow) =>
             val assignments = equalOpportunism(assignee, context)
             //Remove all edges to be assigned from the window
+            //TODO: Use a mutable or at least heavily optimised queue variant for the window
+            //TODO: Avoid frivolous filter and toSet calls if you can help it.
             val assignedEdges = assignments.map(_._1).toSet
             val dddWindow = ddWindow.filterNot(assignedEdges.contains)
             //Remove all motif matches which include assignedEdges from the matchList
             //First remove matchList entries which belong to vertices from assignedEdges
+            //TODO: Pretty certain the below is not correct - check against algo in paper
             val assignedVertices = assignedEdges.map(Edge[E].vertices).flatMap(p => Set(p._1, p._2))
             //Then go through the entries for all vertices and update their sets to remove entries which include the edges
             val ddMatchList = (dMatchList -- assignedVertices).mapValues(_.filterNot { case (matchEs, node) =>
@@ -205,25 +227,8 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
         }
       } else (this.copy(matchList = dMatchList, window = dWindow), List.empty[(E[V], PartId)])
     }
-      //Then return Loom copy along with list of edges and partIds
-      //TODO: Work through the relationship between Neighbourhoods, Edges and Vertices here.
   }
 
-
-  //Either change to using a Partitioned[A] case class wrapper for partitioned element types or add a setPart method to
-  //  existing partitioned typeclass
-
-  //Refactor Partitioner typeclass to return an Option[V: Partitioned], Rather than an Option[PartId]?
-  //How do we do buffered partitioners?
-    //One option is abstract over Option in return type to some Foldable F[_]. That way some partitioners could return
-    //  Option[V], another could return List[V].
-    //Another option is to have another Partitioner typeclass for buffered partitioners which must return a V id as well
-    //  as a partId, and the V id need not refer to the vertex just passed in. This pushes the window management up to
-    //  the callsite. This seems like a bad idea.
-  //We're going with abstracting to a Foldable TC F[_] and returning F[V] rather than an F[PartId].
-
-  //Loom will still need the AdjListBuilder as an input like LDG
-  //The window can be internal though.
 }
 
 object Loom {

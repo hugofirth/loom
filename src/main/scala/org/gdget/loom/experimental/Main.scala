@@ -53,6 +53,7 @@ object Main {
   import LogicalParGraph._
 
   val qSeed = 12738419
+  var trace = 0
 
   private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
                                                 size: Int, prime: Int)
@@ -138,6 +139,9 @@ object Main {
         //Submit edge to be partitioned and accept a list of already partitioned edges (as we expect this partitioner to
         //  be windowed. Should probably represent that explicitly in types ...
         val (dP, partitioned) = pEv.partition(p, hd, adjBldr)
+
+        trace += partitioned.size
+        if(trace % 1000 == 0) println(s"Added $trace edges so far")
         //Add partitioned edges to adjBldr
         val dAdj = partitioned.foldLeft(adjBldr) { (adj, p) =>
           //Get the edge's constituent vertices
@@ -219,8 +223,8 @@ object Main {
 
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
-      val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
-      //        val p = HashPartitioner(conf.numK, 0.part)
+      // val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
+      val p = HashPartitioner(conf.numK, 0.part)
       println(s"Start parsing json in to graph @ $time")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -243,16 +247,16 @@ object Main {
 
       //TODO: Pull G out of top level TPSTry/Node definition. Its not needed.
       val hackExp = ProvGenExperiment(LogicalParGraph.empty[ProvGenVertex, HPair])
-      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.5, "q2" -> 0.5))
-      val trie = qStream.take(30).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair](conf.prime)) { (trie, g) =>
+      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.9))
+      val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
-      val motifs = trie.motifsFor(0.5)
+      val motifs = trie.motifsFor(0.6)
 
       //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
       val p = Loom[LogicalParGraph, ProvGenVertex, HPair](conf.size/conf.numK, Map.empty[PartId, Int], conf.numK,
         motifs, Map.empty[ProvGenVertex, Set[(Set[HPair[ProvGenVertex]], TPSTryNode[ProvGenVertex, HPair])]],
-        Queue.empty[HPair[ProvGenVertex]], 30000, 2, conf.prime)
+        Queue.empty[HPair[ProvGenVertex]], 10000, 2, conf.prime)
 
 
       val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
@@ -261,7 +265,7 @@ object Main {
     }
 
     //For each stream order
-    List(conf.dfs, conf.bfs, conf.rand).map { order =>
+    List(conf.bfs, conf.rand, conf.dfs).map { order =>
       //Get json dump = - create Stream[UNeighbourhood[ProvGenVertex, HPair]] with GraphReader
       val nStream = GraphReader.read(order, jsonToNeighbourhood[ProvGenVertex](_: JValue, eToV, vToV))
       //Fold in order to deal with possible parsing errors
@@ -273,8 +277,8 @@ object Main {
 
 
         //TODO: Fix bug in TPSTry
-//        val g = altPartitioning(neighbours)
-        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
+        val g = altPartitioning(neighbours)
+//        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")
@@ -292,7 +296,7 @@ object Main {
         exp.trial()
 
         //Run the experiment
-        val results = exp.run(10, exp.fixedQueryStream(qSeed, Map("q1" -> 0.7, "q2" -> 0.3)))
+        val results = exp.run(40, exp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.9)))
 
         println(s"Finish running experiment @ $time")
 
