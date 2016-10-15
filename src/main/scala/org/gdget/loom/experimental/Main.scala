@@ -32,6 +32,7 @@ import org.gdget.loom.experimental.ProvGen.{Activity, Agent, Entity, Vertex => P
 import org.gdget.partitioned._
 import org.gdget.partitioned.data._
 import org.gdget.std.all._
+import org.gdget.loom.util._
 
 import scala.annotation.tailrec
 import scala.collection.immutable.Queue
@@ -53,7 +54,10 @@ object Main {
   import LogicalParGraph._
 
   val qSeed = 12738419
-  var trace = 0
+
+  var edgeAddTrace = 0
+  var partitionTotalTime = 0L
+  var addTotalTime = 0L
 
   private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
                                                 size: Int, prime: Int)
@@ -68,6 +72,7 @@ object Main {
     // /TEST
 
   }
+
 
   /** Method for parsing a JSON value to a given Vertex ADT */
   def jsonToNeighbourhood[V: Partitioned](jValue: JValue,
@@ -138,12 +143,17 @@ object Main {
       case hd #:: tl =>
         //Submit edge to be partitioned and accept a list of already partitioned edges (as we expect this partitioner to
         //  be windowed. Should probably represent that explicitly in types ...
-        val (dP, partitioned) = pEv.partition(p, hd, adjBldr)
+        val (pTime, (dP, partitioned)) = time { pEv.partition(p, hd, adjBldr) }
+        partitionTotalTime += pTime
 
-        trace += partitioned.size
-        if(trace % 1000 == 0) println(s"Added $trace edges so far")
+        edgeAddTrace += partitioned.size
+//        if(edgeAddTrace % 1000 == 0) {
+//          println(s"Added $edgeAddTrace edges so far")
+//          println(s"Total time spent partitioning in ms: $partitionTotalTime")
+//          println(s"Total time spent adding edge entries to graph in ms: $addTotalTime")
+//        }
         //Add partitioned edges to adjBldr
-        val dAdj = partitioned.foldLeft(adjBldr) { (adj, p) =>
+        val (aTime, dAdj) = time { partitioned.foldLeft(adjBldr) { (adj, p) =>
           //Get the edge's constituent vertices
           val (e, ePart) = p
           val (l,r) = Edge[E].vertices(e)
@@ -160,7 +170,8 @@ object Main {
           adj.update(l, lN)
           adj.update(r, rN)
           adj
-        }
+        } }
+        addTotalTime += aTime
         //Once we have updated the adjBldr for this round of assignments, move on to the next edge in the stream
         eStreamToAdj(tl, dAdj, dP)
       case _ =>
@@ -223,8 +234,8 @@ object Main {
 
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
-      // val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
-      val p = HashPartitioner(conf.numK, 0.part)
+       val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
+      //val p = HashPartitioner(conf.numK, 0.part)
       println(s"Start parsing json in to graph @ $time")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -256,7 +267,7 @@ object Main {
       //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
       val p = Loom[LogicalParGraph, ProvGenVertex, HPair](conf.size/conf.numK, Map.empty[PartId, Int], conf.numK,
         motifs, Map.empty[ProvGenVertex, Set[(Set[HPair[ProvGenVertex]], TPSTryNode[ProvGenVertex, HPair])]],
-        Queue.empty[HPair[ProvGenVertex]], 10000, 2, conf.prime)
+        Queue.empty[HPair[ProvGenVertex]], 8000, 2, conf.prime)
 
 
       val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
@@ -277,8 +288,8 @@ object Main {
 
 
         //TODO: Fix bug in TPSTry
-        val g = altPartitioning(neighbours)
-//        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
+//        val g = altPartitioning(neighbours)
+        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")

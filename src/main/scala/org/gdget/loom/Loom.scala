@@ -22,6 +22,7 @@ import cats.implicits._
 import org.gdget.{Edge, Graph}
 import org.gdget.data.{SimpleGraph, UNeighbourhood}
 import org.gdget.partitioned._
+import org.gdget.loom.util._
 
 import scala.collection.{Map => AbsMap, Set => AbsSet}
 import language.higherKinds
@@ -114,24 +115,6 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
     Map(l -> allMatches, r -> allMatches)
   }
 
-  def intersectionWithPart(g: Set[E[V]], part: PartId, context: AbsMap[V, (PartId, _, _)]) = {
-    //Get the vertices from a set of edges
-    val vertices = g.map(Edge[E].vertices).flatMap(edge => Set(edge._1, edge._2))
-    //Get the list of PartIds for those vertices where they are currently assigned, then count how many are == part
-    //toList call because we want more than 1 of the same PartId, so Set flatMap is dangerous
-    vertices.toList.flatMap(context.get).count(_._1 == part)
-  }
-
-  def bid(part: PartId, m: (Set[E[V]], TPSTryNode[V, E]), context: AbsMap[V, (PartId, _, _)]) =
-    intersectionWithPart(m._1, part, context) * (1 - (pSizes.getOrElse(part, 0).toDouble/capacity)) * m._2.support
-
-  def ration(part: (PartId, Int), smin: (PartId, Int)) = {
-    //Check that the partition whose bid is being rationed isn't smin, if it *is* then set alpha to 1
-    val a = if(part == smin) 1 else alpha
-    //Calculate and return ration l
-    (part._2/smin._2) * a
-  }
-
   private def equalOpportunism(e: E[V], context: AdjBuilder[V]): List[(E[V], PartId)] = {
 
     def intersectionWithPart(g: Set[E[V]], part: PartId, context: AbsMap[V, (PartId, _, _)]) = {
@@ -149,7 +132,7 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
       //Check that the partition whose bid is being rationed isn't smin, if it *is* then set alpha to 1
       val a = if(part == smin) 1 else alpha
       //Calculate and return ration l
-      (part._2/smin._2) * a
+      (part._2/(smin._2 + 1)) * a
     }
 
     //get motif matches for edge to be assigned e
@@ -203,28 +186,37 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
       (this, List(ldg(e, context)))
     } else {
       //If e *is* a motif, then add it to the window and update matchList
-      val dWindow = window.enqueue(e)
-      val dMatchList = matchList |+| newMatchesGiven(e)
+//      val dWindow = window.enqueue(e)
+//      val dMatchList = matchList |+| newMatchesGiven(e)
+      val (addTime, (dWindow, dMatchList)) = time {
+        (window.enqueue(e), matchList |+| newMatchesGiven(e))
+      }
+      Loom.addTotalTime += addTime
+
       //Subsequently, if window is larger than t, dequeue oldest Edge and run equalOpportunism
       if(dWindow.size >= t) {
-        dWindow.dequeueOption.fold((this.copy(matchList = dMatchList, window = dWindow), List.empty[(E[V], PartId)])) {
-          case (assignee, ddWindow) =>
-            val assignments = equalOpportunism(assignee, context)
-            //Remove all edges to be assigned from the window
-            //TODO: Use a mutable or at least heavily optimised queue variant for the window
-            //TODO: Avoid frivolous filter and toSet calls if you can help it.
-            val assignedEdges = assignments.map(_._1).toSet
-            val dddWindow = ddWindow.filterNot(assignedEdges.contains)
-            //Remove all motif matches which include assignedEdges from the matchList
-            //First remove matchList entries which belong to vertices from assignedEdges
-            //TODO: Pretty certain the below is not correct - check against algo in paper
-            val assignedVertices = assignedEdges.map(Edge[E].vertices).flatMap(p => Set(p._1, p._2))
-            //Then go through the entries for all vertices and update their sets to remove entries which include the edges
-            val ddMatchList = (dMatchList -- assignedVertices).mapValues(_.filterNot { case (matchEs, node) =>
-              matchEs.exists(assignedEdges.contains)
-            })
-            (this.copy(matchList = ddMatchList, window = dddWindow), assignments)
+        val (assTime, result) = time {
+          dWindow.dequeueOption.fold((this.copy(matchList = dMatchList, window = dWindow), List.empty[(E[V], PartId)])) {
+            case (assignee, ddWindow) =>
+              val assignments = equalOpportunism(assignee, context)
+              //Remove all edges to be assigned from the window
+              //TODO: Use a mutable or at least heavily optimised queue variant for the window
+              //TODO: Avoid frivolous filter and toSet calls if you can help it.
+              val assignedEdges = assignments.map(_._1).toSet
+              val dddWindow = ddWindow.filterNot(assignedEdges.contains)
+              //Remove all motif matches which include assignedEdges from the matchList
+              //First remove matchList entries which belong to vertices from assignedEdges
+              //TODO: Pretty certain the below is not correct - check against algo in paper
+              val assignedVertices = assignedEdges.map(Edge[E].vertices).flatMap(p => Set(p._1, p._2))
+              //Then go through the entries for all vertices and update their sets to remove entries which include the edges
+              val ddMatchList = (dMatchList -- assignedVertices).mapValues(_.filterNot { case (matchEs, node) =>
+                matchEs.exists(assignedEdges.contains)
+              })
+              (this.copy(matchList = ddMatchList, window = dddWindow), assignments)
+          }
         }
+        Loom.assTotalTime += assTime
+        result
       } else (this.copy(matchList = dMatchList, window = dWindow), List.empty[(E[V], PartId)])
     }
   }
@@ -235,6 +227,9 @@ object Loom {
 
   type AdjBuilder[V] = AbsMap[V, (PartId, AbsMap[V, Set[Unit]], AbsMap[V, Set[Unit]])]
 
+  var addTotalTime = 0L
+  var assTotalTime = 0L
+
   //TODO: In the rush to finish this we've lost some of the nice generalisation, try to add it back in later
   implicit def loomPartitioner[G[_, _[_]], V: Partitioned: Labelled, E[_]: Edge](implicit gEv: ParGraph[G, V, E]) =
     new Partitioner[Loom[G, V, E], E[V], AdjBuilder[V], List] {
@@ -243,6 +238,12 @@ object Loom {
 
       override def partition[CC <: AdjBuilder[V]](partitioner: Loom[G, V, E], input: E[V],
                                                   context: CC): (Loom[G, V, E], List[(E[V], PartId)]) = {
+
+       if(context.size % 1000 == 0 ) {
+         println(s"Added ${context.size} vertices")
+         println(s"Took $addTotalTime adding edges to window and computing matches")
+         println(s"Took $assTotalTime calculating assignments of edges to partitions")
+       }
 
         //Partition the edge
         val (part, assignments) = partitioner.addToWindow(input, context)
