@@ -188,8 +188,19 @@ case class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge](capacity: Int
       //If e *is* a motif, then add it to the window and update matchList
 //      val dWindow = window.enqueue(e)
 //      val dMatchList = matchList |+| newMatchesGiven(e)
-      val (addTime, (dWindow, dMatchList)) = time {
-        (window.enqueue(e), matchList |+| newMatchesGiven(e))
+
+      val (calcTime, (dWindow, newMatches)) = time {
+        (window.enqueue(e), newMatchesGiven(e))
+      }
+
+      Loom.calcAddTotalTime += calcTime
+
+      val (addTime, dMatchList) = time {
+//        matchList |+| newMatches
+        newMatches.foldLeft(matchList) { (mL, m) =>
+          val existingEntries = matchList.getOrElse(m._1, Set.empty[(Set[E[V]], TPSTryNode[V, E])])
+          matchList.updated(m._1, existingEntries ++ m._2)
+        }
       }
       Loom.addTotalTime += addTime
 
@@ -227,6 +238,7 @@ object Loom {
 
   type AdjBuilder[V] = AbsMap[V, (PartId, AbsMap[V, Set[Unit]], AbsMap[V, Set[Unit]])]
 
+  var calcAddTotalTime = 0L
   var addTotalTime = 0L
   var assTotalTime = 0L
 
@@ -241,7 +253,8 @@ object Loom {
 
        if(context.size % 1000 == 0 ) {
          println(s"Added ${context.size} vertices")
-         println(s"Took $addTotalTime adding edges to window and computing matches")
+         println(s"Took $calcAddTotalTime computing new motif matches and adding edges to window.")
+         println(s"Took $addTotalTime adding matches to matchList")
          println(s"Took $assTotalTime calculating assignments of edges to partitions")
        }
 
