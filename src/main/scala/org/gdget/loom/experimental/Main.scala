@@ -266,8 +266,7 @@ object Main {
 
       //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
       val p = Loom[LogicalParGraph, ProvGenVertex, HPair](conf.size/conf.numK, Map.empty[PartId, Int], conf.numK,
-        motifs, Map.empty[ProvGenVertex, Set[(Set[HPair[ProvGenVertex]], TPSTryNode[ProvGenVertex, HPair])]],
-        Queue.empty[HPair[ProvGenVertex]], 8000, 2, conf.prime)
+        motifs, 8000, 1.5, conf.prime)
 
 
       val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]

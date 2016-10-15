@@ -27,7 +27,7 @@ package object util {
   def time[A](f: => A): (Long, A) = {
     val t = System.nanoTime
     val result = f
-    val elapsed = (System.nanoTime-t)/1000
+    val elapsed = (System.nanoTime-t)/1000000
     (elapsed, result)
   }
 
