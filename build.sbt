@@ -6,6 +6,8 @@ organization := "org.gdget"
 
 scalaVersion := "2.11.8"
 
+scalacOptions += "-feature"
+
 resolvers ++= Seq(Resolver.sonatypeRepo("releases"))
 
 libraryDependencies ++= Seq(

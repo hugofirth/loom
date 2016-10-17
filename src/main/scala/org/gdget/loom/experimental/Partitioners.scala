@@ -36,7 +36,7 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
   require(k>0, s"You must have 1 or more partitions! You have provided a k of $k")
 
   //TODO: Investigate possible resetting of pSizes map here
-  val unused = (0 to k).map(_.part).filterNot(sizes.contains)
+  val unused = (0 until k).map(_.part).filterNot(sizes.contains)
 
   val pSizes = sizes ++ unused.map(_ -> 0)
 

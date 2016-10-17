@@ -55,10 +55,6 @@ object Main {
 
   val qSeed = 12738419
 
-  var edgeAddTrace = 0
-  var partitionTotalTime = 0L
-  var addTotalTime = 0L
-
   private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
                                                 size: Int, prime: Int)
 
@@ -67,7 +63,7 @@ object Main {
     //TEST
     val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
-      rand = base + "provgen_rand_1000.json", stoch = "", numK = 8, size = 500012, prime = 251)
+      rand = base + "provgen_rand_50000.json", stoch = "", numK = 32, size = 500012, prime = 251)
     provGenExperiment(conf)
     // /TEST
 
@@ -143,17 +139,10 @@ object Main {
       case hd #:: tl =>
         //Submit edge to be partitioned and accept a list of already partitioned edges (as we expect this partitioner to
         //  be windowed. Should probably represent that explicitly in types ...
-        val (pTime, (dP, partitioned)) = time { pEv.partition(p, hd, adjBldr) }
-        partitionTotalTime += pTime
+        val (dP, partitioned) = pEv.partition(p, hd, adjBldr)
 
-        edgeAddTrace += partitioned.size
-//        if(edgeAddTrace % 1000 == 0) {
-//          println(s"Added $edgeAddTrace edges so far")
-//          println(s"Total time spent partitioning in ms: $partitionTotalTime")
-//          println(s"Total time spent adding edge entries to graph in ms: $addTotalTime")
-//        }
         //Add partitioned edges to adjBldr
-        val (aTime, dAdj) = time { partitioned.foldLeft(adjBldr) { (adj, p) =>
+        val dAdj = partitioned.foldLeft(adjBldr) { (adj, p) =>
           //Get the edge's constituent vertices
           val (e, ePart) = p
           val (l,r) = Edge[E].vertices(e)
@@ -170,8 +159,7 @@ object Main {
           adj.update(l, lN)
           adj.update(r, rN)
           adj
-        } }
-        addTotalTime += aTime
+        }
         //Once we have updated the adjBldr for this round of assignments, move on to the next edge in the stream
         eStreamToAdj(tl, dAdj, dP)
       case _ =>
@@ -235,7 +223,7 @@ object Main {
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
        val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
-      //val p = HashPartitioner(conf.numK, 0.part)
+//      val p = HashPartitioner(conf.numK, 0.part)
       println(s"Start parsing json in to graph @ $time")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -275,7 +263,7 @@ object Main {
     }
 
     //For each stream order
-    List(conf.bfs, conf.rand, conf.dfs).map { order =>
+    List(conf.rand, conf.bfs, conf.dfs).map { order =>
       //Get json dump = - create Stream[UNeighbourhood[ProvGenVertex, HPair]] with GraphReader
       val nStream = GraphReader.read(order, jsonToNeighbourhood[ProvGenVertex](_: JValue, eToV, vToV))
       //Fold in order to deal with possible parsing errors
@@ -287,8 +275,8 @@ object Main {
 
 
         //TODO: Fix bug in TPSTry
-//        val g = altPartitioning(neighbours)
-        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
+        val g = altPartitioning(neighbours)
+//        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")

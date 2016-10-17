@@ -257,7 +257,7 @@ object Loom {
                                                              prime: Int)
                                                             (implicit pEv: ParGraph[G, V, E]): Loom[G, V, E] = {
 
-    val unused = (0 to k).map(_.part).filterNot(sizes.contains)
+    val unused = (0 until k).map(_.part).filterNot(sizes.contains)
 
     val pSizes = sizes ++ unused.map(_ -> 0)
 
@@ -275,7 +275,7 @@ object Loom {
       override def partition[CC <: AdjBuilder[V]](p: Loom[G, V, E], input: E[V],
                                                   context: CC): (Loom[G, V, E], List[(E[V], PartId)]) = {
 
-       if(context.size % 1000 == 0 ) {
+       if(context.size % 100000 == 0 ) {
          println(s"Added ${context.size} vertices")
          println(s"Took $calcAddTotalTime computing new motif matches and adding edges to window.")
          println(s"Took $addTotalTime adding matches to matchList")

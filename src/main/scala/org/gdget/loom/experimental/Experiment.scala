@@ -123,7 +123,8 @@ sealed trait Experiment[V, E[_]] {
     */
   def time[A](f: LogicalParGraph[V, E] => A): LogicalParGraph[V, E] => (Long, A) = { g =>
     val t = System.nanoTime
-    ((System.nanoTime-t)/1000, f(g))
+    val result = f(g)
+    ((System.nanoTime-t)/1000000, result)
   }
   
   /** Key method of the Experiment trait which takes a number of queries from `queryStream` to run over `g`.
