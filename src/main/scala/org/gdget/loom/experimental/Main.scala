@@ -56,14 +56,14 @@ object Main {
   val qSeed = 12738419
 
   private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
-                                                size: Int, prime: Int)
+                                                numV: Int, numE: Int, prime: Int)
 
   def main(args: Array[String]): Unit = {
 
     //TEST
     val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
-      rand = base + "provgen_rand_50000.json", stoch = "", numK = 32, size = 500012, prime = 251)
+      rand = base + "provgen_rand_50000.json", stoch = "", numK = 2, numV = 500012, numE = 630000, prime = 251)
     provGenExperiment(conf)
     // /TEST
 
@@ -222,8 +222,9 @@ object Main {
 
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
-       val p = LDGPartitioner(conf.size/conf.numK, Map.empty[PartId, Int], conf.numK)
+//      val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
 //      val p = HashPartitioner(conf.numK, 0.part)
+      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
       println(s"Start parsing json in to graph @ $time")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -253,8 +254,8 @@ object Main {
       val motifs = trie.motifsFor(0.6)
 
       //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
-      val p = Loom[LogicalParGraph, ProvGenVertex, HPair](conf.size/conf.numK, Map.empty[PartId, Int], conf.numK,
-        motifs, 8000, 1.5, conf.prime)
+      val p = Loom[LogicalParGraph, ProvGenVertex, HPair](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
+        motifs, 10000, 1.5, conf.prime)
 
 
       val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
@@ -275,8 +276,8 @@ object Main {
 
 
         //TODO: Fix bug in TPSTry
-        val g = altPartitioning(neighbours)
-//        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
+//        val g = altPartitioning(neighbours)
+        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")

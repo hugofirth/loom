@@ -73,7 +73,53 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
 }
 
 /** The Fennel partitioner described by Tsourakakis et al. (http://dl.acm.org/citation.cfm?id=2556213) */
-case class FennelPartitioner(a: Int)
+case class FennelPartitioner(sizes: Map[PartId, Int], k: Int, numV: Int, numE: Int) {
+
+
+  val unused = (0 until k).map(_.part).filterNot(sizes.contains)
+
+  val pSizes = sizes ++ unused.map(_ -> 0)
+
+  def partitionOf[V: Partitioned, E[_]: Edge](n: UNeighbourhood[V, E], adj: AbsMap[V, (PartId, _, _)]): Option[PartId] = {
+
+    def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
+
+    /* Fennel seeks to assign v to Si which minimises:
+
+       | N(v)/\ Pi | - alpha * theta/2 * (|Pi|)^(theta-1)
+
+       where theta equals 1.5 and alpha equals sqrt(k) * (|E|)/(|V|^theta) */
+
+    //Find the partition with the most of v's existing neighbours (i.e. greatest N(v) /\ Pi)
+    val existingNeighbours = n.neighbours.flatMap(adj.get).toList
+    val neighbourPartitions = existingNeighbours.map(_._1)
+    val partitionCounts = neighbourPartitions.groupBy(identity).mapValues(_.size.toDouble)
+
+    //Find the partition which maximises the score for fennel's function
+    partitionCounts.reduceLeftOption { (highScore, current) =>
+      val (partition, numNeighbours) = current
+
+      //calculate alpha
+      val alpha = math.sqrt(k) * (numE / math.pow(numV, 1.5))
+      //calculate the score of the current partition
+      val score = numNeighbours - (alpha * 0.75 * pSizes.get(partition).map(_.toDouble).fold(0D)(math.sqrt))
+      //If score is higher than current score, then carry greatest scoring partition forward
+      if(score > highScore._2) {
+        current
+      } else if(score == highScore._2) {
+        //If the scores are even break ties by selecting the partition with more free space
+        val cSize = pSizes.get(current._1).map(current -> _)
+        val hSize = pSizes.get(highScore._1).map(highScore -> _)
+        (cSize |@| hSize).map(minUsed).map(_._1).getOrElse(highScore)
+      } else {
+        highScore
+      }
+    }.orElse(pSizes.reduceLeftOption(minUsed)).map(_._1)
+    //In the event that a vertex has no neighbours in any partition, assign them to the emptiest partition of the k
+  }
+}
+
+
 
 case class HashPartitioner(k: Int, nextPart: PartId)
 
@@ -104,6 +150,24 @@ object Partitioners {
             partitioner.copy(sizes = partitioner.sizes.updated(id, size + 1))
           }
           (p.getOrElse(partitioner), pId.map((input, _)))
+      }
+    }
+
+  implicit def fennelPartitioner[V: Partitioned, E[_]: Edge] =
+    new Partitioner[FennelPartitioner, UNeighbourhood[V, E], AbsMap[V, (PartId, _, _)], Option] {
+
+      override implicit def F = Foldable[Option]
+
+      override def partition[CC <: AbsMap[V, (PartId, _, _)]](partitioner: FennelPartitioner,
+                                                              input: UNeighbourhood[V, E],
+                                                              context: CC): (FennelPartitioner, Option[(UNeighbourhood[V, E], PartId)]) = {
+
+        val pId = partitioner.partitionOf(input, context)
+        val p = pId.map { id =>
+          val size = partitioner.sizes.getOrElse(id, 0)
+          partitioner.copy(sizes = partitioner.sizes.updated(id, size + 1))
+        }
+        (p.getOrElse(partitioner), pId.map((input, _)))
       }
     }
 
