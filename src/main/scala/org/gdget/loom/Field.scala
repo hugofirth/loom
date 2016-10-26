@@ -58,6 +58,15 @@ object Field {
       throw new IllegalArgumentException(s"Provided value $p is not one of our supported Field Primes" +
         s": ${fieldPrimes.keySet}"))
   }
+
+  implicit class ModdableInt(n: Int) {
+
+    /** Method to mod an int by a field (mod not remainder!), plus 1 (because our finite field doesn't include 0) and return
+      * a short, because maximum size of a number mod a field is 1279.
+      */
+    def mod(p: Field): Short = ((n.abs % p.value) + 1).toShort
+
+  }
 }
 
 object P {
