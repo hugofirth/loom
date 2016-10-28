@@ -23,6 +23,7 @@ import cats.kernel.{Eq, Monoid}
 
 import language.higherKinds
 import scala.collection.immutable.{BitSet, SortedSet}
+import scala.collection.mutable.ArrayBuffer
 
 /** Trait for objects which represent graph signatures
   *
@@ -40,10 +41,6 @@ sealed trait Signature[P <: Field] {
     */
   protected def factorMultiSet: Array[Int]
 
-  /** The prime p which defines the finite field into which all factors must fall */
-  //TODO: Make this an Option. Or remove it.
-  def field: Field
-
   /** Get the product of all factors in this signature, as a BigInt */
   def value: BigInt
 
@@ -54,17 +51,21 @@ sealed trait Signature[P <: Field] {
 
   override def toString: String = s"Signature($value)"
 
+
+  /** At the moment, this equals method does not account for Field, I should fix that! Even though the typesafe ===
+    * won't have this problem
+    */
   override def equals(other: Any): Boolean = other match {
     case that: Signature[_] =>
       (this eq that) ||
         (that canEqual this) &&
-          field == that.field &&
           factorSet == that.factorSet &&
           factorMultiSet.sameElements(that.factorMultiSet)
     case _ => false
   }
 
   override def hashCode(): Int = {
+    //TODO: Update this default and make efficient
     val state = Seq(factorSet, factorMultiSet)
     state.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
   }
@@ -74,29 +75,27 @@ sealed trait Signature[P <: Field] {
 
 object Signature {
 
-  //apply call fromFactors
+  def apply[P <: Field](p: P, factors: Int*): Signature[P] = fromFactors(p, factors:_*)
 
   /** Return empty Zero signature */
-  def zero[P <: Field]: Signature[P] = Signature0
+  def zero[P <: Field]: Signature[P] = Signature0[P]
 
   private final case class SignatureN[P <: Field] (protected val factorSet: BitSet,
                                                    protected val factorMultiSet: Array[Int],
                                                    field: P) extends Signature[P] {
 
-    //replace with foldLeftOption and then provide a bigInt(1) default
-    def value: BigInt = factors.map(BigInt.apply).product
+    def value: BigInt = factors.foldLeft(BigInt(1)) { _ * _ }
 
     def factors: List[Int] = {
-      //TODO: make the below faster by only using MultiSet, Set is just for equality checks.
       //Create a map of factors f to their multipliers m (Multiset)
-      val factors = factorSet.toList.zip(factorMultiSet).map(p => (p._1, p._2.toShort))
+      val factors = factorMultiSet.map(p => (p >> 16) -> p.toShort)
       //Create lists of m factors f. Flatten to single large list of factors
-      factors.flatMap(p => List.fill(p._2)(p._1))
+      factors.toList.flatMap(p => List.fill(p._2)(p._1))
     }
 
   }
 
-  private case object Signature0 extends Signature[P._1.type] {
+  private case object Signature0 extends Signature[Nothing] {
 
     protected val factorSet: BitSet = BitSet.empty
 
@@ -106,8 +105,11 @@ object Signature {
 
     val factors = List.empty[Int]
 
-    val field = P._1
+    @inline
+    final def apply[P <: Field] = this.asInstanceOf[Signature[P]]
 
+    @inline
+    final def unapply[P <: Field](other: Signature[P]) = other.value == this.value
   }
 
   private final case class Signature3[P <: Field] (f1: Short, f2: Short, f3: Short, field: P) extends Signature[P] {
@@ -121,7 +123,7 @@ object Signature {
       * multiplier are guaranteed to take less than 2 bytes to represent)
       */
     protected def factorMultiSet: Array[Int] = {
-      //This seems horrendously over the top premature optimisation for a little space saving. Are we not comput bound anyway?
+      //This seems horrendously over the top premature optimisation for a little space saving. Are we not compute bound anyway?
       List(f1, f2, f3).sorted.groupBy(identity).map(p => (p._1 << 16) | p._2.size).toArray
     }
 
@@ -171,12 +173,52 @@ object Signature {
 
   //Monoid instance
   implicit def signatureMonoid[P <: Field] = new Monoid[Signature[P]] {
-    // Ok - so we do need Signature0 to be Signature[Nothing] ...
-    override def empty: Signature[P] = ???
+    override def empty: Signature[P] = Signature.zero[P]
 
-    override def combine(x: Signature[P], y: Signature[P]): Signature[P] = {
-      //This is going to be an important method
-      ???
+    /** The below is not very DRY, but should be fairly efficient. Need benchmarks */
+    override def combine(x: Signature[P], y: Signature[P]): Signature[P] = (x, y) match {
+      case (l, Signature0()) => l
+      case (Signature0(), r) => r
+      case (SignatureN(lfSet, lfMultiSet, p), r) =>
+        //Compute the union between the two factor sets
+        val fSUnion = lfSet | r.factorSet
+        //Compute the multiSet
+        val lMs = lfMultiSet.map(e => (e >> 16) -> e.toShort)
+        val rMs = r.factorMultiSet.map(e => (e >> 16) -> e.toShort)
+
+        //Can get away with that last bitwise or because we know that the reduce operation will never produce an int of
+        // more than 16 bits
+        val multiSetUnion = (lMs.toBuffer ++= rMs).groupBy(_._1).mapValues({ e =>
+          e.foldLeft(0) { (acc, entry) => acc + entry._2 }
+        }).map(e => (e._1 << 16) | e._2)
+
+        //Create the new signatureN
+        SignatureN(fSUnion, multiSetUnion.toArray, p)
+      case (l, SignatureN(rfSet, rfMultiSet, p)) =>
+        //Compute the union between the two factor sets
+        val fSUnion = rfSet | l.factorSet
+        //Compute the multiSet
+        val rMs = rfMultiSet.map(e => (e >> 16) -> e.toShort)
+        val lMs = l.factorMultiSet.map(e => (e >> 16) -> e.toShort)
+
+        //Can get away with that last bitwise or because we know that the reduce operation will never produce an int of
+        // more than 16 bits
+        val multiSetUnion = (lMs.toBuffer ++= rMs).groupBy(_._1).mapValues({ e =>
+          e.foldLeft(0) { (acc, entry) => acc + entry._2 }
+        }).map(e => (e._1 << 16) | e._2)
+
+        //Create the new signatureN
+        SignatureN(fSUnion, multiSetUnion.toArray, p)
+      case (Signature3(lf1, lf2, lf3, p), Signature3(rf1, rf2, rf3, _)) =>
+        //Compute the union between the two factor sets
+        val facs = List(lf1.toInt, lf2.toInt, lf3.toInt, rf1.toInt, rf2.toInt, rf3.toInt)
+        val fSUnion = BitSet() ++ facs
+
+        //Compute the multiSet
+        val multiSetUnion = facs.groupBy(identity).map(p => (p._1 << 16) | p._2.size)
+
+        //Create the new signatureN
+        SignatureN(fSUnion, multiSetUnion.toArray, p)
     }
   }
 
