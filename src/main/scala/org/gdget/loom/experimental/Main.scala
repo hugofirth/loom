@@ -55,15 +55,15 @@ object Main {
 
   val qSeed = 12738419
 
-  private[experimental] final case class Config(dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
-                                                numV: Int, numE: Int, prime: Int)
+  private[experimental] final case class Config[P <: Field](dfs: String, bfs: String, rand: String, stoch: String, numK: Int,
+                                                numV: Int, numE: Int, prime: P)
 
   def main(args: Array[String]): Unit = {
 
     //TEST
     val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
-      rand = base + "provgen_rand_50000.json", stoch = "", numK = 2, numV = 500012, numE = 630000, prime = 251)
+      rand = base + "provgen_rand_50000.json", stoch = "", numK = 2, numV = 500012, numE = 630000, prime = P._251)
     provGenExperiment(conf)
     // /TEST
 
@@ -170,13 +170,13 @@ object Main {
   }
 
   /** Method describes the setup and execution of the ProvGen Loom experiment */
-  def provGenExperiment(conf: Config): String = {
+  def provGenExperiment[P <: Field](conf: Config[P]): String = {
 
     //Create the Labelled Instance for ProvGenVertex. Doing it here means we have access to the prime value passed in
     //  conf, but it still feels horrible. This whole file needs to be sorted, split out etc...
     implicit val pgVLabelled = new Labelled[ProvGenVertex] {
 
-      val labels = Random.shuffle((1 until conf.prime).toVector).take(3)
+      val labels = Random.shuffle((0 until conf.prime.value).toVector).take(3)
 
       override def label(a: ProvGenVertex): Int = a match {
         case Entity(_, _) => labels(0)
@@ -248,13 +248,13 @@ object Main {
       //TODO: Pull G out of top level TPSTry/Node definition. Its not needed.
       val hackExp = ProvGenExperiment(LogicalParGraph.empty[ProvGenVertex, HPair])
       val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.9))
-      val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair](conf.prime)) { (trie, g) =>
+      val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair, P](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
       val motifs = trie.motifsFor(0.6)
 
       //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
-      val p = Loom[LogicalParGraph, ProvGenVertex, HPair](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
+      val p = Loom[LogicalParGraph, ProvGenVertex, HPair, P](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
         motifs, 10000, 1.5, conf.prime)
 
 
@@ -276,8 +276,8 @@ object Main {
 
 
         //TODO: Fix bug in TPSTry
-//        val g = altPartitioning(neighbours)
-        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
+        val g = altPartitioning(neighbours)
+//        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")

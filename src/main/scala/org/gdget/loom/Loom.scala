@@ -35,15 +35,15 @@ import scala.collection.immutable.{Queue, SortedSet}
   *
   * @author hugofirth
   */
-final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge] private (val capacity: Int,
+final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] private (val capacity: Int,
                                                                              val sizes: Map[PartId, Int],
                                                                              val k: Int,
-                                                                             val motifs: TPSTry[V, E],
-                                                                             private val matchList: Map[V, Set[(Set[E[V]], TPSTryNode[V, E])]],
+                                                                             val motifs: TPSTry[V, E, P],
+                                                                             private val matchList: Map[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]],
                                                                              private val window: Queue[E[V]],
                                                                              val t: Int,
                                                                              val alpha: Double,
-                                                                             val prime: Int)
+                                                                             val prime: P)
                                                                             (implicit pEv: ParGraph[G, V, E])  {
 
   import Loom._
@@ -52,26 +52,27 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge] private (val
 
   private def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
 
-  private def factorFor(e: E[V], context: Set[E[V]]): Int = {
-    val (l, r) = Edge[E].vertices(e)
-    //Work out existing degree for l & r
-    //Create simplegraph from parent repr
-    val pG = SimpleGraph((context + e).toSeq:_*)
-    //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
-    val lDeg = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
-    val rDeg = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
-
-    //Calculate's edge factor and degree factors for l & r
-    val rDegFactor = ((Labelled[V].label(r) + (rDeg + 1)).abs % prime) + 1
-    val lDegFactor = ((Labelled[V].label(l) + (lDeg + 1)).abs % prime) + 1
-    val eFactor = ((Labelled[V].label(l) - Labelled[V].label(r)).abs % prime) + 1
-    //Calculate combined factor and new signature
-    rDegFactor * lDegFactor * eFactor
+  private def factorFor(e: E[V], context: Set[E[V]]) = {
+//    val (l, r) = Edge[E].vertices(e)
+//    //Work out existing degree for l & r
+//    //Create simplegraph from parent repr
+//    val pG = SimpleGraph((context + e).toSeq:_*)
+//    //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
+//    val lDeg = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
+//    val rDeg = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
+//
+//    //Calculate's edge factor and degree factors for l & r
+//    val rDegFactor = ((Labelled[V].label(r) + (rDeg + 1)).abs % prime) + 1
+//    val lDegFactor = ((Labelled[V].label(l) + (lDeg + 1)).abs % prime) + 1
+//    val eFactor = ((Labelled[V].label(l) - Labelled[V].label(r)).abs % prime) + 1
+//    //Calculate combined factor and new signature
+//    rDegFactor * lDegFactor * eFactor
+    Signature.forAdditionToEdges(e, context, prime)
   }
 
-  private def newMatchesGiven(e: E[V]): Map[V, Set[(Set[E[V]], TPSTryNode[V, E])]] = {
+  private def newMatchesGiven(e: E[V]): Map[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]] = {
     @tailrec
-    def mergeMotifs(es: Set[E[V]], node: TPSTryNode[V, E], matchEs: Set[E[V]]): Option[(Set[E[V]], TPSTryNode[V, E])] = {
+    def mergeMotifs(es: Set[E[V]], node: TPSTryNode[V, E, P], matchEs: Set[E[V]]): Option[(Set[E[V]], TPSTryNode[V, E, P])] = {
       //Only care about complete combinations of l & r motifs, sub combinations will be covered by other sub-motifs for r
       if(es.nonEmpty) {
         //Lazily calculate the combined factors for each edge in the r Motif, given the edges in the l Motif
@@ -110,7 +111,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge] private (val
     //Now on to the merging, take l matchList + lMatches and r matchList (not rMatches)
     val mergedMatches = for {
       (lEdges, lNode) <- matchList.get(l).fold(lMatches)(_ ++ lMatches)
-      (rEdges,  rNode) <- matchList.getOrElse(r, Set.empty[(Set[E[V]], TPSTryNode[V, E])])
+      (rEdges,  rNode) <- matchList.getOrElse(r, Set.empty[(Set[E[V]], TPSTryNode[V, E, P])])
       mergeMatch <- mergeMotifs(rEdges, lNode, lEdges)
     } yield mergeMatch
 
@@ -128,7 +129,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge] private (val
       vertices.toList.flatMap(context.get).count(_._1 == part)
     }
 
-    def bid(part: PartId, m: (Set[E[V]], TPSTryNode[V, E]), context: AbsMap[V, (PartId, _, _)]) =
+    def bid(part: PartId, m: (Set[E[V]], TPSTryNode[V, E, P]), context: AbsMap[V, (PartId, _, _)]) =
       intersectionWithPart(m._1, part, context) * (1 - (sizes.getOrElse(part, 0).toDouble/capacity)) * m._2.support
 
     def ration(part: (PartId, Int), smin: (PartId, Int)) = {
@@ -140,7 +141,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge] private (val
 
     //get motif matches for edge to be assigned e
     val (l, r) = Edge[E].vertices(e)
-    val matches = (matchList.get(l) |+| matchList.get(r)).getOrElse(Set.empty[(Set[E[V]], TPSTryNode[V, E])])
+    val matches = (matchList.get(l) |+| matchList.get(r)).getOrElse(Set.empty[(Set[E[V]], TPSTryNode[V, E, P])])
     //Sort in descending order of support
     val sortedMatches = matches.toList.sortBy({ case (_, n) => n.support })(Ordering[Int].reverse)
     //Find the least used partition. If there are no entries in sizes then we go with a default of 1, to avoid
@@ -181,7 +182,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge] private (val
     (e, common)
   }
 
-  def addToWindow(e: E[V], context: AdjBuilder[V]): (Loom[G,V,E], List[(E[V], PartId)]) = {
+  def addToWindow(e: E[V], context: AdjBuilder[V]): (Loom[G,V,E,P], List[(E[V], PartId)]) = {
 
     //Check if e is a motif, if not then assign immediately
     if(!motifs.root.children.contains(factorFor(e, Set.empty[E[V]]))) {
@@ -201,7 +202,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge] private (val
       val (addTime, dMatchList) = time {
 //        matchList |+| newMatches
         newMatches.foldLeft(matchList) { (mL, m) =>
-          val existingEntries = matchList.getOrElse(m._1, Set.empty[(Set[E[V]], TPSTryNode[V, E])])
+          val existingEntries = matchList.getOrElse(m._1, Set.empty[(Set[E[V]], TPSTryNode[V, E, P])])
           matchList.updated(m._1, existingEntries ++ m._2)
         }
       }
@@ -248,32 +249,32 @@ object Loom {
   var addTotalTime = 0L
   var assTotalTime = 0L
 
-  def apply[G[_, _[_]], V: Partitioned: Labelled, E[_]:Edge](capacity: Int,
+  def apply[G[_, _[_]], V: Partitioned: Labelled, E[_]:Edge, P <: Field](capacity: Int,
                                                              sizes: Map[PartId, Int],
                                                              k: Int,
-                                                             motifs: TPSTry[V, E],
+                                                             motifs: TPSTry[V, E, P],
                                                              t: Int,
                                                              alpha: Double,
-                                                             prime: Int)
-                                                            (implicit pEv: ParGraph[G, V, E]): Loom[G, V, E] = {
+                                                             prime: P)
+                                                            (implicit pEv: ParGraph[G, V, E]): Loom[G, V, E, P] = {
 
     val unused = (0 until k).map(_.part).filterNot(sizes.contains)
 
     val pSizes = sizes ++ unused.map(_ -> 0)
 
-    val emptyMatchList = Map.empty[V, Set[(Set[E[V]], TPSTryNode[V, E])]]
+    val emptyMatchList = Map.empty[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]]
     val emptyWindow = Queue.empty[E[V]]
-    new Loom[G, V, E](capacity, pSizes, k, motifs, emptyMatchList, emptyWindow, t, alpha, prime)
+    new Loom[G, V, E, P](capacity, pSizes, k, motifs, emptyMatchList, emptyWindow, t, alpha, prime)
   }
 
   //TODO: In the rush to finish this we've lost some of the nice generalisation, try to add it back in later
-  implicit def loomPartitioner[G[_, _[_]], V: Partitioned: Labelled, E[_]: Edge](implicit gEv: ParGraph[G, V, E]) =
-    new Partitioner[Loom[G, V, E], E[V], AdjBuilder[V], List] {
+  implicit def loomPartitioner[G[_, _[_]], V: Partitioned: Labelled, E[_]: Edge, P <: Field](implicit gEv: ParGraph[G, V, E]) =
+    new Partitioner[Loom[G, V, E, P], E[V], AdjBuilder[V], List] {
 
       override implicit def F = Foldable[List]
 
-      override def partition[CC <: AdjBuilder[V]](p: Loom[G, V, E], input: E[V],
-                                                  context: CC): (Loom[G, V, E], List[(E[V], PartId)]) = {
+      override def partition[CC <: AdjBuilder[V]](p: Loom[G, V, E, P], input: E[V],
+                                                  context: CC): (Loom[G, V, E, P], List[(E[V], PartId)]) = {
 
        if(context.size % 100000 == 0 ) {
          println(s"Added ${context.size} vertices")

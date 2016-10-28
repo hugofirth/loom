@@ -21,7 +21,7 @@ import language.higherKinds
 import scala.collection.mutable
 import org.gdget.{Edge, Graph}
 import cats._
-import cats.syntax.all._
+import cats.implicits._
 import org.gdget.data.SimpleGraph
 
 import scala.annotation.tailrec
@@ -38,7 +38,7 @@ import scala.collection.mutable.ArrayBuffer
   *
   * @author hugofirth
   */
-final class TPSTry[V, E[_]] private (val root: TPSTryNode[V, E], val total: Int, val p: Int) {
+final class TPSTry[V, E[_], P <: Field] private (val root: TPSTryNode[V, E, P], val total: Int, val p: P) {
 
   import TPSTryNode._
 
@@ -50,8 +50,8 @@ final class TPSTry[V, E[_]] private (val root: TPSTryNode[V, E], val total: Int,
   /** Simple method recurses through the TPSTry nodes and returns the sub-DAG where all nodes have a support ratio
     * greater than the provided threshold value. We call these nodes Motifs.
     */
-  def motifsFor(threshold: Double): TPSTry[V, E] = {
-    def pruneLowSupport(node: TPSTryNode[V, E]): TPSTryNode[V, E] = {
+  def motifsFor(threshold: Double): TPSTry[V, E, P] = {
+    def pruneLowSupport(node: TPSTryNode[V, E, P]): TPSTryNode[V, E, P] = {
       val motifC = node.children.filter { case (_, c) => c.support.toDouble/total >= threshold }
       //TODO: Work out how to properly handle Root case, is a bit redundant at the moment
       //TODO: Tail recursive?
@@ -68,11 +68,11 @@ final class TPSTry[V, E[_]] private (val root: TPSTryNode[V, E], val total: Int,
 
 object TPSTry {
 
-  def apply[G[_, _[_]], V, E[_]](graph: G[V, E], p: Int)(implicit gEv: Graph[G, V, E],
+  def apply[G[_, _[_]], V, E[_], P <: Field](graph: G[V, E], p: P)(implicit gEv: Graph[G, V, E],
                                                  vEv: Labelled[V],
-                                                 eEv: Edge[E]) = new TPSTry[V, E](TPSTryNode(graph, p), 1, p)
+                                                 eEv: Edge[E]) = new TPSTry[V, E, P](TPSTryNode(graph, p), 1, p)
 
-  def empty[V: Labelled, E[_]: Edge](p: Int) = new TPSTry[V, E](TPSTryNode.empty[V, E], 0, p)
+  def empty[V: Labelled, E[_]: Edge, P <: Field](p: P) = new TPSTry[V, E, P](TPSTryNode.empty[V, E, P], 0, p)
 }
 
 
@@ -85,7 +85,7 @@ object TPSTry {
   * @tparam V
   * @tparam E
   */
-sealed trait TPSTryNode[V, E[_]] { self =>
+sealed trait TPSTryNode[V, E[_], P <: Field] { self =>
 
   import TPSTryNode._
 
@@ -97,7 +97,7 @@ sealed trait TPSTryNode[V, E[_]] { self =>
     *
     * To understand how we compute signatures for the graphs in the TPSTry, see (http://www.vldb.org/pvldb/vol8/p413-ge.pdf)
     */
-  def signature: BigInt
+  def signature: Signature[P]
 
   /** Internal representation of this TPSTry node's associated graph. Is a set of edges */
   protected[loom] def repr: Set[E[V]]
@@ -106,10 +106,10 @@ sealed trait TPSTryNode[V, E[_]] { self =>
     *
     * Keys are essentially multiplication factors. A trie node's `signature`
     */
-  def children: Map[Factor, TPSTryNode[V, E]]
+  def children: Map[Signature[P], TPSTryNode[V, E, P]]
 
   /** Add a child to this TPSTry node */
-  protected def addChild(factor: Factor, child: TPSTryNode[V, E]): TPSTryNode[V, E] =
+  protected def addChild(factor: Signature[P], child: TPSTryNode[V, E, P]): TPSTryNode[V, E, P] =
     Node(self.repr, self.support, self.signature, self.children + (factor -> child))
 
   /** Return the graph associated with this TPSTry node, if it exists. This creates a default graph instance for the type
@@ -130,7 +130,7 @@ sealed trait TPSTryNode[V, E[_]] { self =>
     * specific location in the TPSTry, without holding on to a BigInt and calling expensive .get all the time.
     */
   @tailrec
-  final def withFactors(path: Seq[Factor]): Option[TPSTryNode[V, E]] = path match {
+  final def withFactors(path: Seq[Signature[P]]): Option[TPSTryNode[V, E, P]] = path match {
     case head +: tail =>
       children.get(head) match {
         case None => None
@@ -145,9 +145,9 @@ sealed trait TPSTryNode[V, E[_]] { self =>
     *
     * The add function implements the "weave" algorithm described by me in (http://ceur-ws.org/Vol-1558/paper26.pdf).
     */
-  private[loom] def add[G[_, _[_]]](graph: G[V, E], prime: Int)(implicit gEv: Graph[G, V, E], eEv: Edge[E], sEv: Labelled[V]) = {
+  private[loom] def add[G[_, _[_]]](graph: G[V, E], prime: P)(implicit gEv: Graph[G, V, E], eEv: Edge[E], sEv: Labelled[V]) = {
 
-    def corecurse(parent: TPSTryNode[V, E], es: Set[E[V]], depth: Int, sigs: SigTable[V, E]): TPSTryNode[V, E] = {
+    def corecurse(parent: TPSTryNode[V, E, P], es: Set[E[V]], depth: Int, sigs: SigTable[V, E, P]): TPSTryNode[V, E, P] = {
 
       //Get set of vertices from set of edges, or initial graph
       val vs = if (es.isEmpty)
@@ -165,26 +165,28 @@ sealed trait TPSTryNode[V, E[_]] { self =>
       //Fold Left over each incident edge en
       ns.foldLeft(parent) { (p, en) =>
         //Initialise sigsTable at this depth if it doesn't exist yet
-        if(sigs.size <= depth) sigs += mutable.HashMap.empty[BigInt, NodeBuilder[V, E]]
+        if(sigs.size <= depth) sigs += mutable.HashMap.empty[Signature[P], NodeBuilder[V, E, P]]
+
+        val factor = Signature.forAdditionToEdges(en, es, prime)
         // Calculate factor of en
         val (l, r) = Edge[E].vertices(en)
-        //Create simplegraph from parent repr
-        val pG = SimpleGraph((es + en).toSeq:_*)
-        //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
-        val lD = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
-        val rD = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
-        //Calculate the new degree factor for both l & r
-        val rDegFactor = ((Labelled[V].label(r) + (rD + 1)).abs % prime) + 1
-        val lDegFactor = ((Labelled[V].label(l) + (lD + 1)).abs % prime) + 1
-        val eFactor = ((Labelled[V].label(l) - Labelled[V].label(r)).abs % prime) + 1
-        //Calculate combined factor and new signature
-        val factor = rDegFactor * lDegFactor * eFactor
-        val enSig = factor * p.signature
+//        //Create simplegraph from parent repr
+//        val pG = SimpleGraph((es + en).toSeq:_*)
+//        //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
+//        val lD = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
+//        val rD = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
+//        //Calculate the new degree factor for both l & r
+//        val rDegFactor = ((Labelled[V].label(r) + (rD + 1)).abs % prime) + 1
+//        val lDegFactor = ((Labelled[V].label(l) + (lD + 1)).abs % prime) + 1
+//        val eFactor = ((Labelled[V].label(l) - Labelled[V].label(r)).abs % prime) + 1
+//        //Calculate combined factor and new signature
+//        val factor = rDegFactor * lDegFactor * eFactor
+        val enSig = p.signature |+| factor
         //create a builder if one is not found in sigTable with same signature and size
         val b = (sigs(depth).get(enSig), p.children.get(factor)) match {
           case (Some(existing), _) => existing
           case (None, Some(c)) => NodeBuilder(c.repr, c.support + 1, c.signature, c.children)
-          case _ => NodeBuilder(es + en, 1, enSig, Map.empty[Factor, TPSTryNode[V, E]])
+          case _ => NodeBuilder(es + en, 1, enSig, Map.empty[Signature[P], TPSTryNode[V, E, P]])
         }
 
         //Add/Update builder in map
@@ -204,7 +206,7 @@ sealed trait TPSTryNode[V, E[_]] { self =>
 
     //TODO: Fix for depth 0/1, never actually adds single edges to the trie
 //    val edges = Graph[G, V, E].edges(graph)
-    val sigTable = mutable.ArrayBuffer.empty[mutable.HashMap[BigInt, NodeBuilder[V, E]]]
+    val sigTable = mutable.ArrayBuffer.empty[mutable.HashMap[Signature[P], NodeBuilder[V, E, P]]]
     val trieBldr = corecurse(self, Set.empty[E[V]], 0, sigTable)
 
     //Below may have intangible benefits. Investigate.
@@ -217,9 +219,9 @@ sealed trait TPSTryNode[V, E[_]] { self =>
   }
 
 
-  def build(): TPSTryNode[V, E] = {
+  def build(): TPSTryNode[V, E, P] = {
 
-    def recurse(bldr: TPSTryNode[V, E]): TPSTryNode[V, E] = bldr match {
+    def recurse(bldr: TPSTryNode[V, E, P]): TPSTryNode[V, E, P] = bldr match {
       case NodeBuilder(es, supp, sig, c) if c.isEmpty => Tip(es, supp, sig)
       case NodeBuilder(es, supp, sig, c) => Node(es, supp, sig, c.mapValues(recurse))
       case a => a
@@ -233,59 +235,61 @@ sealed trait TPSTryNode[V, E[_]] { self =>
 
 object TPSTryNode {
 
-  /** Type Alias for Int: Factor to avoid confusion */
-  type Factor = Int
+//  /** Type Alias for Int: Factor to avoid confusion */
+//  type Factor = Int
 
   /** Type Alias for signature table, which is a little verbose */
-  type SigTable[V, E[_]] = mutable.ArrayBuffer[mutable.HashMap[BigInt, NodeBuilder[V, E]]]
+  type SigTable[V, E[_], P <: Field] = mutable.ArrayBuffer[mutable.HashMap[Signature[P], NodeBuilder[V, E, P]]]
 
   /** The empty TPSTry, essentially a root node with no children */
-  def empty[V: Labelled, E[_]: Edge] = Root[V, E]()
+  def empty[V: Labelled, E[_]: Edge, P <: Field] = Root[V, E, P]()
 
   /** apply method for building TPSTry++ from provided graph */
-  def apply[G[_, _[_]], V, E[_]](g: G[V, E], p: Int)(implicit gEv: Graph[G, V, E],
+  //TODO: Verify the calling of add method on Root object below
+  def apply[G[_, _[_]], V, E[_], P <: Field](g: G[V, E], p: P)(implicit gEv: Graph[G, V, E],
                                                  vEv: Labelled[V],
-                                                 eEv: Edge[E]): TPSTryNode[V, E] = Root[V, E]().add(g, p)
+                                                 eEv: Edge[E]): TPSTryNode[V, E, P] = Root[V, E, P]().add(g, p)
 
-  private[loom] case class Node[V, E[_]](repr: Set[E[V]], support: Int, signature: BigInt,
-                                         children: Map[Factor, TPSTryNode[V, E]]) extends TPSTryNode[V, E] {
+  private[loom] case class Node[V, E[_], P <: Field](repr: Set[E[V]], support: Int, signature: Signature[P],
+                                         children: Map[Signature[P], TPSTryNode[V, E, P]]) extends TPSTryNode[V, E, P] {
 
     val isEmpty = false
 
   }
 
-  private[loom] case class Tip[G[_, _[_]], V, E[_]](repr: Set[E[V]], support: Int,
-                                                    signature: BigInt) extends TPSTryNode[V, E] {
+  private[loom] case class Tip[G[_, _[_]], V, E[_], P <: Field](repr: Set[E[V]], support: Int,
+                                                    signature: Signature[P]) extends TPSTryNode[V, E, P] {
 
     val isEmpty = true
 
-    val children = Map.empty[Factor, TPSTryNode[V, E]]
+    val children = Map.empty[Signature[P], TPSTryNode[V, E, P]]
   }
 
   //TODO: Do not make this extend TPSTryNode, mutability should be typechecked
-  private[loom] case class NodeBuilder[V, E[_]](repr: Set[E[V]], var support: Int, signature: BigInt,
-                                                var children: Map[Factor, TPSTryNode[V, E]]) extends TPSTryNode[V, E] {
+  private[loom] case class NodeBuilder[V, E[_], P <: Field](repr: Set[E[V]], var support: Int, signature: Signature[P],
+                                                var children: Map[Signature[P], TPSTryNode[V, E, P]]) extends TPSTryNode[V, E, P] {
 
     val isEmpty = false
 
-    override def addChild(factor: Factor, child: TPSTryNode[V, E]): TPSTryNode[V, E] = {
+    override def addChild(factor: Signature[P], child: TPSTryNode[V, E, P]): TPSTryNode[V, E, P] = {
       this.children += (factor -> child)
       this
     }
   }
 
 
-  private[loom] case object Root extends TPSTryNode[Nothing, Nothing] {
+  private[loom] case object Root extends TPSTryNode[Nothing, Nothing, Nothing] {
 
-    def apply[V, E[_]](): TPSTryNode[V, E] = this.asInstanceOf[TPSTryNode[V, E]]
+    def apply[V, E[_], P <: Field](): TPSTryNode[V, E, P] = this.asInstanceOf[TPSTryNode[V, E, P]]
 
-    def unapply[V, E[_]](a: TPSTryNode[V, E]) = a.signature == this.signature
+    def unapply[V, E[_], P <: Field](a: TPSTryNode[V, E, P]) = this eq a
 
     val isEmpty: Boolean = true
 
-    val signature: BigInt = 1
+    //TODO: Not really sure this is the right way to do things?
+    val signature = Signature.zero[Nothing]
 
-    val children = Map.empty[Factor, TPSTryNode[Nothing, Nothing]]
+    val children = Map.empty[Signature[Nothing], TPSTryNode[Nothing, Nothing, Nothing]]
 
     val repr = Set.empty[Nothing]
 
