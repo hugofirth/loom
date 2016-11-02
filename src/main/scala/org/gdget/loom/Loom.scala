@@ -27,6 +27,7 @@ import org.gdget.loom.util._
 import scala.collection.{Map => AbsMap, Set => AbsSet}
 import language.higherKinds
 import scala.annotation.tailrec
+import scala.collection.mutable
 import scala.collection.immutable.{Queue, SortedSet}
 
 /** The Loom graph partitioner. TODO: Expand this comment ....
@@ -36,15 +37,16 @@ import scala.collection.immutable.{Queue, SortedSet}
   * @author hugofirth
   */
 final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] private (val capacity: Int,
-                                                                             val sizes: Map[PartId, Int],
-                                                                             val k: Int,
-                                                                             val motifs: TPSTry[V, E, P],
-                                                                             private val matchList: Map[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]],
-                                                                             private val window: Queue[E[V]],
-                                                                             val t: Int,
-                                                                             val alpha: Double,
-                                                                             val prime: P)
-                                                                            (implicit pEv: ParGraph[G, V, E])  {
+                                                                                         val sizes: Map[PartId, Int],
+                                                                                         val k: Int,
+                                                                                         val motifs: TPSTry[V, E, P],
+                                                                                         private val matchList: mutable.Map[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]],
+                                                                                         private val window: Queue[E[V]],
+                                                                                         private val windowSize: Int,
+                                                                                         val t: Int,
+                                                                                         val alpha: Double,
+                                                                                         val prime: P)
+                                                                                        (implicit pEv: ParGraph[G, V, E])  {
 
   import Loom._
 
@@ -52,23 +54,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
 
   private def minUsed[A](x: (A, Int), y: (A, Int)) = if (x._2 > y._2) y else x
 
-  private def factorFor(e: E[V], context: Set[E[V]]) = {
-//    val (l, r) = Edge[E].vertices(e)
-//    //Work out existing degree for l & r
-//    //Create simplegraph from parent repr
-//    val pG = SimpleGraph((context + e).toSeq:_*)
-//    //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
-//    val lDeg = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
-//    val rDeg = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
-//
-//    //Calculate's edge factor and degree factors for l & r
-//    val rDegFactor = ((Labelled[V].label(r) + (rDeg + 1)).abs % prime) + 1
-//    val lDegFactor = ((Labelled[V].label(l) + (lDeg + 1)).abs % prime) + 1
-//    val eFactor = ((Labelled[V].label(l) - Labelled[V].label(r)).abs % prime) + 1
-//    //Calculate combined factor and new signature
-//    rDegFactor * lDegFactor * eFactor
-    Signature.forAdditionToEdges(e, context, prime)
-  }
+  private def factorFor(e: E[V], context: Set[E[V]]) = Signature.forAdditionToEdges(e, context, prime)
 
   private def newMatchesGiven(e: E[V]): Map[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]] = {
     @tailrec
@@ -115,6 +101,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
       mergeMatch <- mergeMotifs(rEdges, lNode, lEdges)
     } yield mergeMatch
 
+    //TODO: Check performance for this semigroup add
     val allMatches = lMatches |+| rMatches |+| mergedMatches
     Map(l -> allMatches, r -> allMatches)
   }
@@ -163,21 +150,35 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
   }
 
   private def ldg(e: E[V], context: AdjBuilder[V]): (E[V], PartId) = {
-    //TODO: The below relies heavily on assumptions about how the context AdjList is built, make sure they're correct
     def neighbourPartitions(v: V) = context.get(v).fold(List.empty[PartId]) { case (pId, in, out) =>
-      pId :: (in.keySet ++ out.keySet).toList.flatMap(context.get).map(_._1)
+      pId :: (in.keys ++ out.keys).flatMap(context.get).map(_._1).toList
     }
 
     //Get the vertices from e
     val (l,r) = Edge[E].vertices(e)
     //Get the adjLists of e's vertices from context if they exist
-    val parts = neighbourPartitions(l) ++ neighbourPartitions(r)
-    //TODO: add the negative weighting to make this actually like LDG
+    val parts = neighbourPartitions(l) ::: neighbourPartitions(r)
     //find the most common part or the least used partition
-    val common = parts match {
-      case ps @ hd :: tl => ps.groupBy(identity).mapValues(_.size).maxBy(_._2)._1
-      case Nil => sizes.reduceLeftOption(minUsed).map(_._1).getOrElse(0.part)
-    }
+    val partitionCounts = parts.groupBy(identity).mapValues(_.size.toDouble)
+    //Adjust partition counts to maintain balance and find the biggest scoring partition
+
+    val common = partitionCounts.reduceLeftOption { (highScore, current) =>
+      //Get the score of the current partition
+      val pScore = sizes.get(current._1).fold(0D) { s => current._2 * (1 - (s / capacity)) }
+      //Check if it is greater than the current highscore, then carry greatest scoring partition forward
+      if(pScore > highScore._2) {
+        current
+      } else if(pScore == highScore._2) {
+        val cSize = sizes.get(current._1).map(current -> _)
+        val hSize = sizes.get(highScore._1).map(highScore -> _)
+        (cSize |@| hSize).map(minUsed).map(_._1).getOrElse(highScore)
+
+      } else {
+        highScore
+      }
+    }.getOrElse(sizes.reduceLeft(minUsed))._1
+    //In the event that a vertex has no neighbours in any partition, assign them to the emptiest partition of the k
+
     //return edge, common partId
     (e, common)
   }
@@ -190,28 +191,26 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
       (this, List(ldg(e, context)))
     } else {
       //If e *is* a motif, then add it to the window and update matchList
-//      val dWindow = window.enqueue(e)
-//      val dMatchList = matchList |+| newMatchesGiven(e)
-
+      val dWindowSize = this.windowSize + 1
       val (calcTime, (dWindow, newMatches)) = time {
         (window.enqueue(e), newMatchesGiven(e))
       }
 
       Loom.calcAddTotalTime += calcTime
 
-      val (addTime, dMatchList) = time {
-//        matchList |+| newMatches
-        newMatches.foldLeft(matchList) { (mL, m) =>
+      val (addTime, _) = time {
+        newMatches.foreach { m =>
           val existingEntries = matchList.getOrElse(m._1, Set.empty[(Set[E[V]], TPSTryNode[V, E, P])])
-          matchList.updated(m._1, existingEntries ++ m._2)
+          matchList.update(m._1, existingEntries ++ m._2)
         }
       }
       Loom.addTotalTime += addTime
 
-      var newPart = new Loom(capacity, sizes, k, motifs, dMatchList, dWindow, t, alpha, prime)
+
+      var newPart = new Loom(capacity, sizes, k, motifs, matchList, dWindow, dWindowSize, t, alpha, prime)
 
       //Subsequently, if window is larger than t, dequeue oldest Edge and run equalOpportunism
-      if(dWindow.size >= t) {
+      if(dWindowSize >= t) {
         val (assTime, result) = time {
           dWindow.dequeueOption.fold((newPart, List.empty[(E[V], PartId)])) {
             case (assignee, ddWindow) =>
@@ -222,14 +221,25 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
               val assignedEdges = assignments.map(_._1).toSet
               val dddWindow = ddWindow.filterNot(assignedEdges.contains)
               //Remove all motif matches which include assignedEdges from the matchList
-              //First remove matchList entries which belong to vertices from assignedEdges
-              //TODO: Pretty certain the below is not correct - check against algo in paper
+              //First, find the set of vertices which are being assigned (as part of edges)
               val assignedVertices = assignedEdges.map(Edge[E].vertices).flatMap(p => Set(p._1, p._2))
-              //Then go through the entries for all vertices and update their sets to remove entries which include the edges
-              val ddMatchList = (dMatchList -- assignedVertices).mapValues(_.filterNot { case (matchEs, node) =>
-                matchEs.exists(assignedEdges.contains)
-              })
-              newPart = new Loom(capacity, sizes, k, motifs, ddMatchList, dWindow, t, alpha, prime)
+              //Then go through the entries for all these vertices and update their sets to remove motif matches which
+              // include the assigned edges
+              //Finally, go through the entries for other vertices in the removed motif matches and remove the matches
+              // there as well
+              //TODO: Improve performance. Below is better, but throws away all immutability, so we really ought to see big gains
+              for {
+                v <- assignedVertices
+                entries <- matchList.get(v)
+                droppedEntries = entries.filter(entry => entry._1.exists(assignedEdges.contains))
+                dropEdgeSet <- droppedEntries.map(_._1)
+                dropE <- dropEdgeSet
+                dropV <- List(Edge[E].left(dropE), Edge[E].right(dropE))
+                dropVEntries <- matchList.get(dropV)
+              } { matchList.update(dropV, dropVEntries -- droppedEntries) }
+
+              //Create the new partitioner with the updated window and matchlist
+              newPart = new Loom(capacity, sizes, k, motifs, matchList, dddWindow, dWindowSize - assignments.size, t, alpha, prime)
               (newPart, assignments)
           }
         }
@@ -258,13 +268,16 @@ object Loom {
                                                              prime: P)
                                                             (implicit pEv: ParGraph[G, V, E]): Loom[G, V, E, P] = {
 
+    require(capacity>0, s"You must indicate a partition capacity of greater than 0 to Loom. You have provided a capacity of $capacity")
+    require(k>0, s"You must have 1 or more partitions! You have provided a k of $k")
+
     val unused = (0 until k).map(_.part).filterNot(sizes.contains)
 
     val pSizes = sizes ++ unused.map(_ -> 0)
 
-    val emptyMatchList = Map.empty[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]]
+    val emptyMatchList = mutable.Map.empty[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]]
     val emptyWindow = Queue.empty[E[V]]
-    new Loom[G, V, E, P](capacity, pSizes, k, motifs, emptyMatchList, emptyWindow, t, alpha, prime)
+    new Loom[G, V, E, P](capacity, pSizes, k, motifs, emptyMatchList, emptyWindow, 0, t, alpha, prime)
   }
 
   //TODO: In the rush to finish this we've lost some of the nice generalisation, try to add it back in later
@@ -276,7 +289,7 @@ object Loom {
       override def partition[CC <: AdjBuilder[V]](p: Loom[G, V, E, P], input: E[V],
                                                   context: CC): (Loom[G, V, E, P], List[(E[V], PartId)]) = {
 
-       if(context.size % 100000 == 0 ) {
+       if(context.size % 10000 == 0 ) {
          println(s"Added ${context.size} vertices")
          println(s"Took $calcAddTotalTime computing new motif matches and adding edges to window.")
          println(s"Took $addTotalTime adding matches to matchList")
@@ -288,7 +301,9 @@ object Loom {
         //Update sizes
         val sizeDeltas = assignments.groupBy(_._2).mapValues(_.size)
         val dSizes = part.sizes |+| sizeDeltas
-        (new Loom(p.capacity, dSizes, p.k, p.motifs, p.matchList, p.window, p.t, p.alpha, p.prime), assignments)
+        //p vs part fix
+        (new Loom(part.capacity, dSizes, part.k, part.motifs, part.matchList, part.window, part.windowSize, part.t,
+          part.alpha, part.prime), assignments)
       }
     }
 }

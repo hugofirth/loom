@@ -98,10 +98,10 @@ object ProvGen {
       for {
         age <- op.getAll[Agent]
         act <- age.traverse(op.traverseAllNeighbours[Activity])
-//        ent <- act.flatten.traverse(op.traverseAllNeighbours[Entity])
-//        ent2 <- ent.flatten.traverse(op.traverseAllNeighbours[Entity])
-//        act2 <- ent2.flatten.traverse(op.traverseAllNeighbours[Activity])
-//        age2 <- act2.flatten.traverse(op.traverseAllNeighbours[Agent])
+        ent <- act.flatten.traverse(op.traverseAllNeighbours[Entity])
+        ent2 <- ent.flatten.traverse(op.traverseAllNeighbours[Entity])
+        act2 <- ent2.flatten.traverse(op.traverseAllNeighbours[Activity])
+        age2 <- act2.flatten.traverse(op.traverseAllNeighbours[Agent])
       } yield act.flatten
     }
 
@@ -114,11 +114,11 @@ object ProvGen {
     )
 
     val gQ2 = SimpleGraph[Vertex, HPair](
-      Agent(1, None) ->  Activity(2, None)//,
-//      Activity(2, None) -> Entity(3, None),
-//      Entity(3, None) -> Entity(4, None),
-//      Entity(4, None) -> Activity(5, None),
-//      Activity(5, None) -> Agent(6, None)
+      Agent(1, None) ->  Activity(2, None),
+      Activity(2, None) -> Entity(3, None),
+      Entity(3, None) -> Entity(4, None),
+      Entity(4, None) -> Activity(5, None),
+      Activity(5, None) -> Agent(6, None)
     )
 
 

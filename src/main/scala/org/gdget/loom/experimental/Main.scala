@@ -17,12 +17,10 @@
   */
 package org.gdget.loom.experimental
 
-import java.nio.file.Paths
 import java.util.Calendar
 
 import cats._
 import cats.implicits._
-import jawn.ParseException
 import jawn.ast.JValue
 import org.gdget._
 import org.gdget.data.{SimpleGraph, UNeighbourhood}
@@ -35,7 +33,6 @@ import org.gdget.std.all._
 import org.gdget.loom.util._
 
 import scala.annotation.tailrec
-import scala.collection.immutable.Queue
 import scala.collection.{mutable, Map => AbsMap}
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext}
@@ -63,7 +60,7 @@ object Main {
     //TEST
     val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
-      rand = base + "provgen_rand_50000.json", stoch = "", numK = 2, numV = 500012, numE = 630000, prime = P._251)
+      rand = base + "provgen_rand_50000.json", stoch = "", numK = 8, numV = 500012, numE = 630000, prime = P._251)
     provGenExperiment(conf)
     // /TEST
 
@@ -247,7 +244,7 @@ object Main {
 
       //TODO: Pull G out of top level TPSTry/Node definition. Its not needed.
       val hackExp = ProvGenExperiment(LogicalParGraph.empty[ProvGenVertex, HPair])
-      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.9))
+      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.9, "q2" -> 0.1))
       val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair, P](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
@@ -275,9 +272,8 @@ object Main {
       }, {neighbours =>
 
 
-        //TODO: Fix bug in TPSTry
-        val g = altPartitioning(neighbours)
-//        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
+//        val g = altPartitioning(neighbours)
+        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")
