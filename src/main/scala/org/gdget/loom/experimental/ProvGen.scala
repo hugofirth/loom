@@ -29,26 +29,9 @@ import org.gdget.partitioned.data.LogicalParGraph
 
 object ProvGen {
 
-  /** ADT for ProvGen vertices
-    *
-    * @author hugofirth
-    */
-  sealed trait Vertex {
-    def id: Int
-
-    def part: Option[PartId]
-
+  /** ADT for ProvGen vertices */
+  sealed trait Vertex extends GenVertex {
     def canEqual(other: Any): Boolean = other.isInstanceOf[Vertex]
-
-    override def equals(other: Any): Boolean = other match {
-      case that: Vertex =>
-        (that canEqual this) &&
-          id == that.id
-      case _ => false
-    }
-
-    override def hashCode(): Int = id.hashCode
-
   }
 
   case class Agent(id: Int, part: Option[PartId]) extends Vertex
@@ -73,7 +56,6 @@ object ProvGen {
       override def eqv(x: Vertex, y: Vertex): Boolean = x.equals(y)
     }
 
-    //TODO: implement Labelled TC for Vertex
   }
 
   /** Trait containing information needed for running ProvGen experiments, including graph location and queries */
@@ -102,11 +84,17 @@ object ProvGen {
         ent2 <- ent.flatten.traverse(op.traverseAllNeighbours[Entity])
         act2 <- ent2.flatten.traverse(op.traverseAllNeighbours[Activity])
         age2 <- act2.flatten.traverse(op.traverseAllNeighbours[Agent])
-      } yield act.flatten
+      } yield age2.flatten
     }
 
 
-    def q4 = ???
+    def q3 = {
+      val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
+      for {
+        age <- op.getAll[Agent]
+        act <- age.traverse(op.traverseAllNeighbours[Activity])
+      } yield act.flatten
+    }
 
     val gQ1 = SimpleGraph[Vertex, HPair](
       Entity(1, None) -> Entity(2, None),
@@ -121,13 +109,16 @@ object ProvGen {
       Activity(5, None) -> Agent(6, None)
     )
 
-
+    val gQ3 = SimpleGraph[Vertex, HPair](
+      Agent(1, None) -> Activity(2, None)
+    )
 
 
     override def queries: Map[String, (Q[Vertex, HPair], SimpleGraph[Vertex, HPair])] =
       Map(
         "q1" -> (q1, gQ1),
-        "q2" -> (q2, gQ2)
+        "q2" -> (q2, gQ2),
+        "q3" -> (q3, gQ3)
       )
   }
 

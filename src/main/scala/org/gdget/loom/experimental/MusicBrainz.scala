@@ -17,9 +17,32 @@
   */
 package org.gdget.loom.experimental
 
-
+import org.gdget.partitioned.PartId
 
 
 object MusicBrainz {
 
+  /** ADT for MusicBrainz vertices */
+  sealed trait Vertex extends GenVertex {
+    def canEqual(other: Any): Boolean = other.isInstanceOf[Vertex]
+  }
+
+  case class Album(id: Int, part: Option[PartId]) extends Vertex
+  case class Area(id: Int, part: Option[PartId]) extends Vertex
+  case class Artist(id: Int, part: Option[PartId]) extends Vertex
+  case class ArtistAlias(id: Int, part: Option[PartId]) extends Vertex
+  case class ArtistCredit(id: Int, part: Option[PartId]) extends Vertex
+  case class Country(id: Int, part: Option[PartId]) extends Vertex
+  case class Entry(id: Int, part: Option[PartId]) extends Vertex
+  case class Label(id: Int, part: Option[PartId]) extends Vertex
+  case class Medium(id: Int, part: Option[PartId]) extends Vertex
+  case class Other(id: Int, part: Option[PartId]) extends Vertex
+  case class Place(id: Int, part: Option[PartId]) extends Vertex
+  case class Recording(id: Int, part: Option[PartId]) extends Vertex
+  case class Release(id: Int, part: Option[PartId]) extends Vertex
+  case class SearchHint(id: Int, part: Option[PartId]) extends Vertex
+  case class Single(id: Int, part: Option[PartId]) extends Vertex
+  case class Track(id: Int, part: Option[PartId]) extends Vertex
+  case class Url(id: Int, part: Option[PartId]) extends Vertex
+  case class Work(id: Int, part: Option[PartId]) extends Vertex
 }

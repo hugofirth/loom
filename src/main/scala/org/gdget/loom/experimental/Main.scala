@@ -244,11 +244,11 @@ object Main {
 
       //TODO: Pull G out of top level TPSTry/Node definition. Its not needed.
       val hackExp = ProvGenExperiment(LogicalParGraph.empty[ProvGenVertex, HPair])
-      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.9, "q2" -> 0.1))
+      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.4, "q3" -> 0.5))
       val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair, P](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
-      val motifs = trie.motifsFor(0.6)
+      val motifs = trie.motifsFor(0.7)
 
       //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
       val p = Loom[LogicalParGraph, ProvGenVertex, HPair, P](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
@@ -291,7 +291,7 @@ object Main {
         exp.trial()
 
         //Run the experiment
-        val results = exp.run(40, exp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.9)))
+        val results = exp.run(40, exp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.4, "q3" -> 0.5)))
 
         println(s"Finish running experiment @ $time")
 
