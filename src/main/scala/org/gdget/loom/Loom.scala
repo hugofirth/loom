@@ -41,7 +41,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
                                                                                          val k: Int,
                                                                                          val motifs: TPSTry[V, E, P],
                                                                                          private val matchList: mutable.Map[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]],
-                                                                                         private val window: Queue[E[V]],
+                                                                                         private val window: mutable.LinkedHashSet[E[V]],
                                                                                          private val windowSize: Int,
                                                                                          val t: Int,
                                                                                          val alpha: Double,
@@ -106,7 +106,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
     Map(l -> allMatches, r -> allMatches)
   }
 
-  private def equalOpportunism(e: E[V], context: AdjBuilder[V]): List[(E[V], PartId)] = {
+  private def equalOpportunism(e: E[V], context: AdjBuilder[V]): Set[(E[V], PartId)] = {
 
     def intersectionWithPart(g: Set[E[V]], part: PartId, context: AbsMap[V, (PartId, _, _)]) = {
       //Get the vertices from a set of edges
@@ -134,6 +134,7 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
     //Find the least used partition. If there are no entries in sizes then we go with a default of 1, to avoid
     //  divide by zero, though tbh  if sizes is empty we have bigger problems. Need to be more systematic about my
     //  error handling.
+    //TODO: Focus on this, as I'm not sure it quite works.
     val smin = sizes.reduceLeftOption(minUsed).getOrElse(0.part -> 1)
     //For each partition, calculate its ration
     val rations = sizes.map(p => p._1 -> ration(p, smin))
@@ -146,10 +147,13 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
     //Find the winner and drop its score
     val (winner, (_, winnerMotifs)) = bids.maxBy { case (pId, (score, bidMotifs)) => score }
     //Drop the tpstry nodes, combine the edge sets in the awarded (bid on) motif matches, and map them to the winning pId
-    winnerMotifs.map(_._1).reduceOption(_ ++ _).fold(List.empty[E[V]])(_.toList).map(_ -> winner)
+    val assignments = winnerMotifs.map(_._1).reduceOption(_ ++ _).getOrElse(Set.empty[E[V]]).map(_ -> winner)
+    assignments + (e -> winner)
   }
 
   private def ldg(e: E[V], context: AdjBuilder[V]): (E[V], PartId) = {
+
+    //TODO: Find some way of passing in the whole neighbourhood here, its not fair otherwise.
     def neighbourPartitions(v: V) = context.get(v).fold(List.empty[PartId]) { case (pId, in, out) =>
       pId :: (in.keys ++ out.keys).flatMap(context.get).map(_._1).toList
     }
@@ -183,69 +187,73 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
     (e, common)
   }
 
-  def addToWindow(e: E[V], context: AdjBuilder[V]): (Loom[G,V,E,P], List[(E[V], PartId)]) = {
+  def addToWindow(e: E[V], context: AdjBuilder[V]): (Loom[G,V,E,P], Set[(E[V], PartId)]) = {
 
     //Check if e is a motif, if not then assign immediately
     if(!motifs.root.children.contains(factorFor(e, Set.empty[E[V]]))) {
       //Assign E with LDG like heuristic
-      (this, List(ldg(e, context)))
+      (this, Set(ldg(e, context)))
     } else {
       //If e *is* a motif, then add it to the window and update matchList
       val dWindowSize = this.windowSize + 1
-      val (calcTime, (dWindow, newMatches)) = time {
-        (window.enqueue(e), newMatchesGiven(e))
+      val dWindow = window += e
+      val newMatches = newMatchesGiven(e)
+
+      newMatches.foreach { m =>
+        val existingEntries = matchList.getOrElse(m._1, Set.empty[(Set[E[V]], TPSTryNode[V, E, P])])
+        matchList.update(m._1, existingEntries ++ m._2)
       }
-
-      Loom.calcAddTotalTime += calcTime
-
-      val (addTime, _) = time {
-        newMatches.foreach { m =>
-          val existingEntries = matchList.getOrElse(m._1, Set.empty[(Set[E[V]], TPSTryNode[V, E, P])])
-          matchList.update(m._1, existingEntries ++ m._2)
-        }
-      }
-      Loom.addTotalTime += addTime
-
 
       var newPart = new Loom(capacity, sizes, k, motifs, matchList, dWindow, dWindowSize, t, alpha, prime)
 
       //Subsequently, if window is larger than t, dequeue oldest Edge and run equalOpportunism
       if(dWindowSize >= t) {
-        val (assTime, result) = time {
-          dWindow.dequeueOption.fold((newPart, List.empty[(E[V], PartId)])) {
-            case (assignee, ddWindow) =>
-              val assignments = equalOpportunism(assignee, context)
-              //Remove all edges to be assigned from the window
-              //TODO: Use a mutable or at least heavily optimised queue variant for the window
-              //TODO: Avoid frivolous filter and toSet calls if you can help it.
-              val assignedEdges = assignments.map(_._1).toSet
-              val dddWindow = ddWindow.filterNot(assignedEdges.contains)
-              //Remove all motif matches which include assignedEdges from the matchList
-              //First, find the set of vertices which are being assigned (as part of edges)
-              val assignedVertices = assignedEdges.map(Edge[E].vertices).flatMap(p => Set(p._1, p._2))
-              //Then go through the entries for all these vertices and update their sets to remove motif matches which
-              // include the assigned edges
-              //Finally, go through the entries for other vertices in the removed motif matches and remove the matches
-              // there as well
-              //TODO: Improve performance. Below is better, but throws away all immutability, so we really ought to see big gains
-              for {
-                v <- assignedVertices
-                entries <- matchList.get(v)
-                droppedEntries = entries.filter(entry => entry._1.exists(assignedEdges.contains))
-                dropEdgeSet <- droppedEntries.map(_._1)
-                dropE <- dropEdgeSet
-                dropV <- List(Edge[E].left(dropE), Edge[E].right(dropE))
-                dropVEntries <- matchList.get(dropV)
-              } { matchList.update(dropV, dropVEntries -- droppedEntries) }
+        dWindow.headOption.fold((newPart, Set.empty[(E[V], PartId)])) { assignee =>
+          val assignments = equalOpportunism(assignee, context)
+          //Remove all edges to be assigned from the window
+          val assignedEdges = assignments.map(_._1)
 
-              //Create the new partitioner with the updated window and matchlist
-              newPart = new Loom(capacity, sizes, k, motifs, matchList, dddWindow, dWindowSize - assignments.size, t, alpha, prime)
-              (newPart, assignments)
+          val ddWindow = dWindow --= assignedEdges
+          //Remove all motif matches which include assignedEdges from the matchList
+          //First, find the set of vertices which are being assigned (as part of edges)
+          val b = Set.newBuilder[V]
+          for (e <- assignedEdges) {
+            b += Edge[E].left(e)
+            b += Edge[E].right(e)
           }
+          val assignedVertices = b.result()
+
+          //Then go through the entries for all these vertices and update their sets to remove motif matches which
+          // include the assigned edges
+          //Finally, go through the entries for other vertices in the removed motif matches and remove the matches
+          // there as well
+          //TODO: Improve performance. Below is better, but throws away all immutability, so we really ought to see big gains
+          val dropB = new mutable.HashMap[V, mutable.Set[(Set[E[V]], TPSTryNode[V, E, P])]]
+            with mutable.MultiMap[V, (Set[E[V]], TPSTryNode[V, E, P])]
+          for {
+            v <- assignedVertices
+            entries <- matchList.get(v)
+            (dropEdgeSet, dropNode)  <- entries if dropEdgeSet.exists(assignedEdges.contains)
+            dropE <- dropEdgeSet
+            (dropL, dropR) = Edge[E].vertices(dropE)
+          } {
+            dropB.addBinding(dropL, (dropEdgeSet, dropNode))
+            dropB.addBinding(dropR, (dropEdgeSet, dropNode))
+          }
+
+          dropB.foreach { case (v, dropEntriesBuilder) =>
+            val vEntries = matchList.getOrElse(v, Set.empty[(Set[E[V]], TPSTryNode[V, E, P])]) -- dropEntriesBuilder
+            if(vEntries.isEmpty)
+              matchList.remove(v)
+            else
+              matchList.update(v, vEntries)
+          }
+
+          //Create the new partitioner with the updated window and matchlist
+          newPart = new Loom(capacity, sizes, k, motifs, matchList, ddWindow, dWindowSize - assignments.size, t, alpha, prime)
+          (newPart, assignments)
         }
-        Loom.assTotalTime += assTime
-        result
-      } else (newPart, List.empty[(E[V], PartId)])
+      } else (newPart, Set.empty[(E[V], PartId)])
     }
   }
 
@@ -254,10 +262,6 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
 object Loom {
 
   type AdjBuilder[V] = AbsMap[V, (PartId, AbsMap[V, Set[Unit]], AbsMap[V, Set[Unit]])]
-
-  var calcAddTotalTime = 0L
-  var addTotalTime = 0L
-  var assTotalTime = 0L
 
   def apply[G[_, _[_]], V: Partitioned: Labelled, E[_]:Edge, P <: Field](capacity: Int,
                                                              sizes: Map[PartId, Int],
@@ -276,7 +280,7 @@ object Loom {
     val pSizes = sizes ++ unused.map(_ -> 0)
 
     val emptyMatchList = mutable.Map.empty[V, Set[(Set[E[V]], TPSTryNode[V, E, P])]]
-    val emptyWindow = Queue.empty[E[V]]
+    val emptyWindow = new mutable.LinkedHashSet[E[V]]()
     new Loom[G, V, E, P](capacity, pSizes, k, motifs, emptyMatchList, emptyWindow, 0, t, alpha, prime)
   }
 
@@ -290,20 +294,26 @@ object Loom {
                                                   context: CC): (Loom[G, V, E, P], List[(E[V], PartId)]) = {
 
        if(context.size % 10000 == 0 ) {
+         //TODO: Work out why we get so many repeats (presumably drops) for bfs. Is the dropping a good strategy?
          println(s"Added ${context.size} vertices")
-         println(s"Took $calcAddTotalTime computing new motif matches and adding edges to window.")
-         println(s"Took $addTotalTime adding matches to matchList")
-         println(s"Took $assTotalTime calculating assignments of edges to partitions")
        }
 
+
         //Partition the edge
-        val (part, assignments) = p.addToWindow(input, context)
-        //Update sizes
-        val sizeDeltas = assignments.groupBy(_._2).mapValues(_.size)
-        val dSizes = part.sizes |+| sizeDeltas
-        //p vs part fix
-        (new Loom(part.capacity, dSizes, part.k, part.motifs, part.matchList, part.window, part.windowSize, part.t,
-          part.alpha, part.prime), assignments)
+
+        //If the edge has been seen before, drop it
+        if(!context.get(Edge[E].left(input)).fold(false)(_._3.contains(Edge[E].right(input)))) {
+
+          val (part, assignments) = p.addToWindow(input, context)
+          //Update sizes
+          val sizeDeltas = assignments.groupBy(_._2).mapValues(_.size)
+          val dSizes = part.sizes |+| sizeDeltas
+          //p vs part fix
+          (new Loom(part.capacity, dSizes, part.k, part.motifs, part.matchList, part.window, part.windowSize, part.t,
+            part.alpha, part.prime), assignments.toList)
+        } else {
+          (p, List.empty[(E[V], PartId)])
+        }
       }
     }
 }

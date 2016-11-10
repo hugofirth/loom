@@ -23,6 +23,7 @@ import cats.kernel.{Eq, Monoid}
 
 import language.higherKinds
 import scala.collection.immutable.{BitSet, SortedSet}
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 /** Trait for objects which represent graph signatures
@@ -39,7 +40,7 @@ sealed trait Signature[P <: Field] {
     * Effectively a Map[Int, Int] where each Int -> Int entry is represented by a single Int (because each factor and its
     * multiplier are guaranteed to take less than 2 bytes to represent)
     */
-  protected def factorMultiSet: Array[Int]
+  protected def factorMultiSet: Seq[Int]
 
   /** Get the product of all factors in this signature, as a BigInt */
   def value: BigInt
@@ -49,9 +50,6 @@ sealed trait Signature[P <: Field] {
 
   def canEqual(other: Any): Boolean = other.isInstanceOf[Signature[_]]
 
-  override def toString: String = s"Signature($value)"
-
-
   /** At the moment, this equals method does not account for Field, I should fix that! Even though the typesafe ===
     * won't have this problem
     */
@@ -60,14 +58,12 @@ sealed trait Signature[P <: Field] {
       (this eq that) ||
         (that canEqual this) &&
           factorSet == that.factorSet &&
-          factorMultiSet.sameElements(that.factorMultiSet)
+          factorMultiSet == that.factorMultiSet
     case _ => false
   }
 
   override def hashCode(): Int = {
-    //TODO: Update this default and make efficient
-    val state = Seq(factorSet, factorMultiSet)
-    state.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
+    37 * ((31 * factorSet.hashCode()) + factorMultiSet.hashCode())
   }
 }
 
@@ -81,7 +77,7 @@ object Signature {
   def zero[P <: Field]: Signature[P] = Signature0[P]
 
   private final case class SignatureN[P <: Field] (protected val factorSet: BitSet,
-                                                   protected val factorMultiSet: Array[Int],
+                                                   protected val factorMultiSet: Seq[Int],
                                                    field: P) extends Signature[P] {
 
     def value: BigInt = factors.foldLeft(BigInt(1)) { _ * _ }
@@ -93,13 +89,15 @@ object Signature {
       factors.toList.flatMap(p => List.fill(p._2)(p._1))
     }
 
+    override def toString: String = s"Signature($value, Z${field.value}, $factorMultiSet)"
+
   }
 
   private case object Signature0 extends Signature[Nothing] {
 
-    protected val factorSet: BitSet = BitSet.empty
+    protected val factorSet: BitSet = BitSet(1)
 
-    protected val factorMultiSet = Array.empty[Int]
+    protected val factorMultiSet: Seq[Int] = Array[Int]((1 << 16) | 1)
 
     val value = BigInt(1)
 
@@ -109,11 +107,14 @@ object Signature {
     final def apply[P <: Field] = this.asInstanceOf[Signature[P]]
 
     @inline
-    final def unapply[P <: Field](other: Signature[P]) = other.value == this.value
+    final def unapply[P <: Field](other: Signature[P]) = this eq other
+
+    override def toString: String = s"Signature($value, Z?, $factorMultiSet)"
   }
 
   private final case class Signature3[P <: Field] (f1: Short, f2: Short, f3: Short, field: P) extends Signature[P] {
 
+    //TODO: Work out why this was a sorted set rather than a bitset?
     /** The set of distinct factors which make up this graph signature */
     protected def factorSet = SortedSet(f1, f2, f3)
 
@@ -122,9 +123,9 @@ object Signature {
       * Effectively a Map[Int, Int] where each Int -> Int entry is represented by a single Int (because each factor and its
       * multiplier are guaranteed to take less than 2 bytes to represent)
       */
-    protected def factorMultiSet: Array[Int] = {
+    protected def factorMultiSet = {
       //This seems horrendously over the top premature optimisation for a little space saving. Are we not compute bound anyway?
-      List(f1, f2, f3).sorted.groupBy(identity).map(p => (p._1 << 16) | p._2.size).toArray
+      List(f1, f2, f3).groupBy(identity).map(p => (p._1 << 16) | p._2.size).toArray
     }
 
     /** Get the product of all factors in this signature, as a BigInt */
@@ -132,6 +133,8 @@ object Signature {
 
     /** Get the list of all factors in this signature */
     override def factors: List[Int] = List(f1, f2, f3)
+
+    override def toString: String = s"Signature($value, Z${field.value}, $factorMultiSet)"
   }
 
   def forAdditionToEdges[V: Labelled, E[_]: Edge, P <: Field](added: E[V], context: Set[E[V]],
@@ -146,7 +149,11 @@ object Signature {
     val rDegFactor = (Labelled[V].label(r) + (rDeg + 1)) mod field
     val lDegFactor = (Labelled[V].label(l) + (lDeg + 1)) mod field
     val eFactor = (Labelled[V].label(l) - Labelled[V].label(r)) mod field
-    Signature3(rDegFactor, lDegFactor, eFactor, field)
+
+    //Lets sort the factors - yay for pattern matching assignment
+    val List(_1, _2, _3) = List(rDegFactor, lDegFactor, eFactor).sorted
+
+    Signature3(_1, _2, _3, field)
   }
 
   def forAdditionToGraph[G[_, _[_]], V: Labelled, E[_]: Edge, P <: Field](added: E[V], context: G[V, E], field: P)
@@ -159,6 +166,7 @@ object Signature {
     //Ensure correct by construction
     require(factors.forall(f => f <= p.value && f > 0), s"All factors must be within specified finite field [1,${p.value}")
 
+    //TODO: Is this guaranteed (or even likely) to be sorted?
     val factorsGrouped = factors.groupBy(identity)
     val factorSet = BitSet() ++ factorsGrouped.keySet
     val factorMultiSet = factorsGrouped.map(p => (p._1 << 16) | p._2.size).toArray
@@ -188,7 +196,7 @@ object Signature {
 
         //Can get away with that last bitwise or because we know that the reduce operation will never produce an int of
         // more than 16 bits
-        val multiSetUnion = (lMs.toBuffer ++= rMs).groupBy(_._1).mapValues({ e =>
+        val multiSetUnion = (lMs.toBuffer ++= rMs).sortBy(_._1).groupBy(_._1).mapValues({ e =>
           e.foldLeft(0) { (acc, entry) => acc + entry._2 }
         }).map(e => (e._1 << 16) | e._2)
 
@@ -203,7 +211,7 @@ object Signature {
 
         //Can get away with that last bitwise or because we know that the reduce operation will never produce an int of
         // more than 16 bits
-        val multiSetUnion = (lMs.toBuffer ++= rMs).groupBy(_._1).mapValues({ e =>
+        val multiSetUnion = (lMs.toBuffer ++= rMs).sortBy(_._1).groupBy(_._1).mapValues({ e =>
           e.foldLeft(0) { (acc, entry) => acc + entry._2 }
         }).map(e => (e._1 << 16) | e._2)
 

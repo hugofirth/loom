@@ -25,6 +25,8 @@ import org.gdget.loom.experimental.Experiment.Q
 import org.gdget.partitioned._
 import org.gdget.partitioned.data.LogicalParGraph
 
+import scala.util.Random
+
 
 
 object ProvGen {
@@ -70,7 +72,7 @@ object ProvGen {
       val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
       for {
         es <- op.getAll[Entity]
-        es2 <- es.traverse(op.traverseAllNeighbours[Entity])
+        es2 <- es.filter(_ => Random.nextInt(100) > 89).traverse(op.traverseAllNeighbours[Entity])
         es3 <- es2.flatten.traverse(op.traverseAllNeighbours[Entity])
       } yield es3.flatten
     }
@@ -79,7 +81,7 @@ object ProvGen {
       val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
       for {
         age <- op.getAll[Agent]
-        act <- age.traverse(op.traverseAllNeighbours[Activity])
+        act <- age.filter(_ => Random.nextInt(100) > 89).traverse(op.traverseAllNeighbours[Activity])
         ent <- act.flatten.traverse(op.traverseAllNeighbours[Entity])
         ent2 <- ent.flatten.traverse(op.traverseAllNeighbours[Entity])
         act2 <- ent2.flatten.traverse(op.traverseAllNeighbours[Activity])
@@ -92,7 +94,7 @@ object ProvGen {
       val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
       for {
         age <- op.getAll[Agent]
-        act <- age.traverse(op.traverseAllNeighbours[Activity])
+        act <- age.filter(_ => Random.nextInt(100) > 89).traverse(op.traverseAllNeighbours[Activity])
       } yield act.flatten
     }
 

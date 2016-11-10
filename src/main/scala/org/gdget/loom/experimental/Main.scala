@@ -60,7 +60,7 @@ object Main {
     //TEST
     val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
-      rand = base + "provgen_rand_50000.json", stoch = "", numK = 8, numV = 500012, numE = 630000, prime = P._251)
+      rand = base + "provgen_rand.json", stoch = "", numK = 8, numV = 500012, numE = 630000, prime = P._251)
     provGenExperiment(conf)
     // /TEST
 
@@ -219,9 +219,9 @@ object Main {
 
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
-//      val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
+      val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
 //      val p = HashPartitioner(conf.numK, 0.part)
-      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
+//      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
       println(s"Start parsing json in to graph @ $time")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -244,11 +244,11 @@ object Main {
 
       //TODO: Pull G out of top level TPSTry/Node definition. Its not needed.
       val hackExp = ProvGenExperiment(LogicalParGraph.empty[ProvGenVertex, HPair])
-      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.4, "q3" -> 0.5))
+      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.3, "q3" -> 0.6))
       val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair, P](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
-      val motifs = trie.motifsFor(0.7)
+      val motifs = trie.motifsFor(0.6)
 
       //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
       val p = Loom[LogicalParGraph, ProvGenVertex, HPair, P](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
@@ -273,7 +273,7 @@ object Main {
 
 
 //        val g = altPartitioning(neighbours)
-        val g = loomPartitioning(neighbours.flatMap(_.inEdges))
+        val g = loomPartitioning(neighbours.flatMap(n => n.edges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")
@@ -291,7 +291,7 @@ object Main {
         exp.trial()
 
         //Run the experiment
-        val results = exp.run(40, exp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.4, "q3" -> 0.5)))
+        val results = exp.run(40, exp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.3, "q3" -> 0.6)))
 
         println(s"Finish running experiment @ $time")
 

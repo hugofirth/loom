@@ -33,7 +33,7 @@ sealed trait Field {
 
 object Field {
 
-  private val fieldPrimes = Map(
+  private[loom] val fieldPrimes = Map(
     1 -> P._1,
     2 -> P._2,
     3 -> P._3,

@@ -19,7 +19,7 @@ package org.gdget.loom
 
 import language.higherKinds
 import cats.data.Kleisli
-import cats.{Monad, RecursiveTailRecM, ~>}
+import cats.{Monad, ~>}
 import org.gdget.{Edge, Graph}
 import org.gdget.data.query._
 import org.gdget.partitioned._
@@ -37,7 +37,7 @@ package object experimental {
     * Additionally to assuming a specific Graph implementation, this query interpreter will count cross partition
     * traversals
     */
-  def countingInterpreterK[M[_]: Monad : RecursiveTailRecM, V: Partitioned, E[_]: Edge] =
+  def countingInterpreterK[M[_]: Monad, V: Partitioned, E[_]: Edge] =
     new (QueryOp[LogicalParGraph, V, E, ?] ~> Kleisli[M, LogicalParGraph[V, E], ?]) {
       import QueryOp._
 
