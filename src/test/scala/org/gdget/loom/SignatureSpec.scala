@@ -127,4 +127,7 @@ class SignatureSpec extends LoomSuite {
   test("A signature's value must always equal the product of its factors")( forAll { (sig: Signature[P._251.type]) =>
     sig.value should equal (sig.factors.map(BigInt.apply).product)
   })
+
+  //TODO: Test that empty + a-b has the same signature as a-b-c - b-c
+
 }

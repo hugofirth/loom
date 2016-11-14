@@ -170,17 +170,6 @@ sealed trait TPSTryNode[V, E[_], P <: Field] { self =>
         val factor = Signature.forAdditionToEdges(en, es, prime)
         // Calculate factor of en
         val (l, r) = Edge[E].vertices(en)
-//        //Create simplegraph from parent repr
-//        val pG = SimpleGraph((es + en).toSeq:_*)
-//        //Get neighbourhoods for both l & r in pG and find out their current degree, or else its 0
-//        val lD = Graph[SimpleGraph, V, E].neighbourhood(pG, l).map(_.neighbours.size).getOrElse(0)
-//        val rD = Graph[SimpleGraph, V, E].neighbourhood(pG, r).map(_.neighbours.size).getOrElse(0)
-//        //Calculate the new degree factor for both l & r
-//        val rDegFactor = ((Labelled[V].label(r) + (rD + 1)).abs % prime) + 1
-//        val lDegFactor = ((Labelled[V].label(l) + (lD + 1)).abs % prime) + 1
-//        val eFactor = ((Labelled[V].label(l) - Labelled[V].label(r)).abs % prime) + 1
-//        //Calculate combined factor and new signature
-//        val factor = rDegFactor * lDegFactor * eFactor
         val enSig = p.signature |+| factor
         //create a builder if one is not found in sigTable with same signature and size
         val b = (sigs(depth).get(enSig), p.children.get(factor)) match {
@@ -196,24 +185,8 @@ sealed trait TPSTryNode[V, E[_], P <: Field] { self =>
       }
     }
 
-    //TODO: Get rid of the idea that TPSTry as a datastructure is subdivisible. It isn't really. Doesn't make sense that it should be.
-    //This would mean redefining TPSTry as a case class and creating TPSTryNode sealed trait with all the same cases it has now.
-    //All algorithms can still be defined recursively but can't add a graph to a Node, only to the TPSTry itself, which will keep a
-    // root reference. Still need to work on a remove method, as that *does* make sense in this context. Same approach:
-    //Recurse, remove support, if support is 0 remove node and stop recursing. Any time we change support, (or remove a node?), we replace with a builder
-    // and put the builder in a sigTable which we carry along with us.
-
-
-    //TODO: Fix for depth 0/1, never actually adds single edges to the trie
-//    val edges = Graph[G, V, E].edges(graph)
     val sigTable = mutable.ArrayBuffer.empty[mutable.HashMap[Signature[P], NodeBuilder[V, E, P]]]
     val trieBldr = corecurse(self, Set.empty[E[V]], 0, sigTable)
-
-    //Below may have intangible benefits. Investigate.
-//    edges.foldLeft(self) { (trie, edge) =>
-//      //For each individual edge, add it to the trie
-//      corecurse(trie, Set(edge), 0, sigTable)
-//    }
 
     trieBldr.build()
   }
@@ -235,9 +208,6 @@ sealed trait TPSTryNode[V, E[_], P <: Field] { self =>
 
 object TPSTryNode {
 
-//  /** Type Alias for Int: Factor to avoid confusion */
-//  type Factor = Int
-
   /** Type Alias for signature table, which is a little verbose */
   type SigTable[V, E[_], P <: Field] = mutable.ArrayBuffer[mutable.HashMap[Signature[P], NodeBuilder[V, E, P]]]
 
@@ -245,7 +215,6 @@ object TPSTryNode {
   def empty[V: Labelled, E[_]: Edge, P <: Field] = Root[V, E, P]()
 
   /** apply method for building TPSTry++ from provided graph */
-  //TODO: Verify the calling of add method on Root object below
   def apply[G[_, _[_]], V, E[_], P <: Field](g: G[V, E], p: P)(implicit gEv: Graph[G, V, E],
                                                  vEv: Labelled[V],
                                                  eEv: Edge[E]): TPSTryNode[V, E, P] = Root[V, E, P]().add(g, p)
@@ -265,7 +234,8 @@ object TPSTryNode {
     val children = Map.empty[Signature[P], TPSTryNode[V, E, P]]
   }
 
-  //TODO: Do not make this extend TPSTryNode, mutability should be typechecked
+  //TODO: Do not make this extend TPSTryNode, mutability should be typechecked?
+  //TODO: Check why this is private[package]
   private[loom] case class NodeBuilder[V, E[_], P <: Field](repr: Set[E[V]], var support: Int, signature: Signature[P],
                                                 var children: Map[Signature[P], TPSTryNode[V, E, P]]) extends TPSTryNode[V, E, P] {
 
