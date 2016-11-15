@@ -17,10 +17,12 @@
   */
 package org.gdget.loom.experimental
 
-import cats.{Eq, Show}
-import org.gdget.HPair
+import cats._
+import cats.implicits._
+import org.gdget.{Direction, HPair, Out}
 import org.gdget.data.SimpleGraph
 import org.gdget.data.query.QueryBuilder
+import org.gdget.loom.{Field, Labelled}
 import org.gdget.loom.experimental.Experiment.Q
 import org.gdget.partitioned._
 import org.gdget.partitioned.data.LogicalParGraph
@@ -46,6 +48,35 @@ object ProvGen {
 
     /** ProvGenVertex typeclass instances */
 
+    implicit val pGVParsable = new Parsable[Vertex] {
+      /** Factory method for ProvGenVertex given a label string and an id Int */
+      def fromRepr(lbl: String, id: Int): Either[String, Vertex] = (lbl, id) match {
+        case ("AGENT", i) =>
+          Right(Agent(i, None))
+        case ("ACTIVITY", i) =>
+          Right(Activity(i, None))
+        case ("ENTITY", i) =>
+          Right(Entity(i, None))
+        case other =>
+          Left(s"Unrecognised vertex label $other")
+      }
+
+      /** Factory method for ProvGenVertex given an Edge label string, an id Int and a direction */
+      //TODO: Find out why on earth I'm calling .toInt here?
+      def fromEdgeRepr(eLbl: String, id: Int, dir: Direction): Either[String, Vertex] = (eLbl, id, dir) match {
+        case ("WASDERIVEDFROM", i, _) =>
+          Right(Entity(i.toInt, None))
+        case ("WASGENERATEDBY", i, d) =>
+          Right(if(d == Out) Entity(i.toInt, None) else Activity(i.toInt, None))
+        case ("WASASSOCIATEDWITH", i, d) =>
+          Right(if(d == Out) Activity(i.toInt, None) else Agent(i.toInt, None))
+        case ("USED", i, d) =>
+          Right(if(d == Out) Activity(i.toInt, None) else Entity(i.toInt, None))
+        case other =>
+          Left(s"Unrecognised edge label $other")
+      }
+    }
+
     implicit val pGVPartitioned = new Partitioned[Vertex] {
       override def partition(v: Vertex): Option[PartId] = v.part
     }
@@ -58,14 +89,22 @@ object ProvGen {
       override def eqv(x: Vertex, y: Vertex): Boolean = x.equals(y)
     }
 
+    /** Generator for ProvGenVertex Labelled typeclass instance, needs to be local instantiated because needs prime p */
+    def pgVLabelled[P <: Field](p: P) = new Labelled[Vertex] {
+
+      val labels = Random.shuffle((0 until p.value).toVector).take(3)
+
+      override def label(a: Vertex): Int = a match {
+        case Entity(_, _) => labels(0)
+        case Agent(_, _) => labels(1)
+        case Activity(_, _) => labels(2)
+      }
+    }
+
   }
 
   /** Trait containing information needed for running ProvGen experiments, including graph location and queries */
   trait ProvGenExperimentMeta extends ExperimentMeta[Vertex, HPair] { self: Experiment[Vertex, HPair] =>
-
-    import cats._
-    import cats.syntax.traverse._
-    import cats.instances.all._
 
     //TODO: Most naive implementation possible from paper 1, need to improve query lang
     def q1 = {

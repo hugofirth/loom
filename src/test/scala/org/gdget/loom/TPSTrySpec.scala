@@ -20,7 +20,7 @@ package org.gdget.loom
 /** Testing the functionality of objects of the TPSTry class.
   *
   */
-class TPSTrySpec extends LoomSuite{
+class TPSTrySpec extends LoomSuite {
 
   //TODO: Test pruning
 

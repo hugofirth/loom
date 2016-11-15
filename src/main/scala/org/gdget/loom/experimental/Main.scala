@@ -57,11 +57,20 @@ object Main {
 
   def main(args: Array[String]): Unit = {
 
+
     //TEST
     val base = "/Users/hugofirth/Desktop/Data/Loom/provgen/"
     val conf = Config(dfs = base + "provgen_dfs.json", bfs = base + "provgen_bfs.json",
       rand = base + "provgen_rand.json", stoch = "", numK = 8, numV = 500012, numE = 630000, prime = P._251)
-    provGenExperiment(conf)
+
+    //Create the Labelled Instance for ProvGenVertex. Doing it here means we have access to the prime value passed in
+    //  conf, but it still feels horrible. This whole file needs to be sorted, split out etc...
+    implicit val pgVLabelled = ProvGenVertex.pgVLabelled(conf.prime)
+
+    //Create experiment instance
+    val exp = ProvGenExperiment(qSeed)
+
+    executeExperiment(conf, exp)
     // /TEST
 
   }
@@ -166,104 +175,60 @@ object Main {
 
   }
 
-  /** Method describes the setup and execution of the ProvGen Loom experiment */
-  def provGenExperiment[P <: Field](conf: Config[P]): String = {
+  /** Method describes the setup and execution of a Loom experiment */
+  def executeExperiment[P <: Field, V: Partitioned : Labelled: Parsable](conf: Config[P], exp: Experiment[V, HPair]): String = {
 
-    //Create the Labelled Instance for ProvGenVertex. Doing it here means we have access to the prime value passed in
-    //  conf, but it still feels horrible. This whole file needs to be sorted, split out etc...
-    implicit val pgVLabelled = new Labelled[ProvGenVertex] {
+    import Experiment._
 
-      val labels = Random.shuffle((0 until conf.prime.value).toVector).take(3)
 
-      override def label(a: ProvGenVertex): Int = a match {
-        case Entity(_, _) => labels(0)
-        case Agent(_, _) => labels(1)
-        case Activity(_, _) => labels(2)
-      }
-    }
+    println(s"Start reading in json @ $timeNow")
 
-    def time = Calendar.getInstance.getTime.toString
-
-    val vToV: (String, Int) => Either[String, ProvGenVertex] = {
-      case ("AGENT", id) =>
-        Right(Agent(id, None))
-      case ("ACTIVITY", id) =>
-        Right(Activity(id, None))
-      case ("ENTITY", id) =>
-        Right(Entity(id, None))
-      case other =>
-        Left(s"Unrecognised vertex label $other")
-    }
-
-    val eToV: (String, Int, Direction) => Either[String, ProvGenVertex] = {
-      case ("WASDERIVEDFROM", id, _) =>
-        Right(Entity(id.toInt, None))
-      case ("WASGENERATEDBY", id, d) =>
-        Right(if(d == Out) Entity(id.toInt, None) else Activity(id.toInt, None))
-      case ("WASASSOCIATEDWITH", id, d) =>
-        Right(if(d == Out) Activity(id.toInt, None) else Agent(id.toInt, None))
-      case ("USED", id, d) =>
-        Right(if(d == Out) Activity(id.toInt, None) else Entity(id.toInt, None))
-      case other =>
-        Left(s"Unrecognised edge label $other")
-    }
-
-    println(s"Start reading in json @ $time")
-
-    def altPartitioning(neighbours: Stream[UNeighbourhood[ProvGenVertex, HPair]]) = {
+    def altPartitioning(neighbours: Stream[UNeighbourhood[V, HPair]]) = {
 
       //Given Stream of neighbourhoods, for each partitioner
       import Partitioners._
 
-      println(s"Create the partitioner @ $time")
+      println(s"Create the partitioner @ $timeNow")
 
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
       val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
 //      val p = HashPartitioner(conf.numK, 0.part)
 //      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
-      println(s"Start parsing json in to graph @ $time")
+      println(s"Start parsing json in to graph @ $timeNow")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
       // partitions to the adjacency matrix at each step.
       // This will produce a LogicalParGraph and exhaust the stream
-      val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
+      val bldr = mutable.Map.empty[V, (PartId, Map[V, Set[Unit]], Map[V, Set[Unit]])]
       //TODO: Clean up Partitioner typeclass
       val adj = nStreamToAdj(neighbours, bldr, p)
-      LogicalParGraph.fromAdjList[ProvGenVertex, HPair](adj.toMap)
+      LogicalParGraph.fromAdjList[V, HPair](adj.toMap)
     }
 
-    def loomPartitioning(edges: Stream[HPair[ProvGenVertex]]) = {
+    def loomPartitioning(qStream: QStream[V, HPair], edges: Stream[HPair[V]]) = {
 
-      println(s"Create the partitioner @ $time")
+      println(s"Create the partitioner @ $timeNow")
 
-      //Bit of a hack (ok a lot of a hack)
-      //We need the motifs before we can create the graph so we need to create the experiment with an empty graph and then
-      // create a query stream with the same seed in this method and in the nStream fold
-      //TODO: Make this a little more principled by making many of the methods on Experiment static
-
-      //TODO: Pull G out of top level TPSTry/Node definition. Its not needed.
-      val hackExp = ProvGenExperiment(LogicalParGraph.empty[ProvGenVertex, HPair])
-      val qStream = hackExp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.3, "q3" -> 0.6))
-      val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[ProvGenVertex, HPair, P](conf.prime)) { (trie, g) =>
+      val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[V, HPair, P](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
       val motifs = trie.motifsFor(0.6)
 
-      //Create the Loom partitioner for LogicalParGraph, ProvGenVertex, HPair
-      val p = Loom[LogicalParGraph, ProvGenVertex, HPair, P](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
+      //Create the Loom partitioner for LogicalParGraph, V, HPair
+      val p = Loom[LogicalParGraph, V, HPair, P](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
         motifs, 10000, 1.5, conf.prime)
 
 
-      val bldr = mutable.Map.empty[ProvGenVertex, (PartId, Map[ProvGenVertex, Set[Unit]], Map[ProvGenVertex, Set[Unit]])]
+      val bldr = mutable.Map.empty[V, (PartId, Map[V, Set[Unit]], Map[V, Set[Unit]])]
       val adj = eStreamToAdj(edges, bldr, p)
-      LogicalParGraph.fromAdjList[ProvGenVertex, HPair](adj.toMap)
+      LogicalParGraph.fromAdjList[V, HPair](adj.toMap)
     }
 
     //For each stream order
     List(conf.rand, conf.bfs, conf.dfs).map { order =>
-      //Get json dump = - create Stream[UNeighbourhood[ProvGenVertex, HPair]] with GraphReader
-      val nStream = GraphReader.read(order, jsonToNeighbourhood[ProvGenVertex](_: JValue, eToV, vToV))
+      //Get json dump = - create Stream[UNeighbourhood[V, HPair]] with GraphReader
+      val nStream = GraphReader.read(order, jsonToNeighbourhood[V](_: JValue, Parsable[V].fromEdgeRepr, Parsable[V].fromRepr))
       //Fold in order to deal with possible parsing errors
       nStream.fold({ e =>
         val error = s"Error parsing json file $order on line ${e.line}: ${e.msg}"
@@ -271,29 +236,28 @@ object Main {
         error
       }, {neighbours =>
 
+        val qStream = exp.fixedQueryStream(Map("q1" -> 0.1, "q2" -> 0.3, "q3" -> 0.6))
 
 //        val g = altPartitioning(neighbours)
-        val g = loomPartitioning(neighbours.flatMap(n => n.edges))
+        val g = loomPartitioning(qStream, neighbours.flatMap(n => n.edges))
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
         println(s"Partition sizes are: $pSizes")
 
-        println(s"Finished parsing json in to graph @ $time")
+        println(s"Finished parsing json in to graph @ $timeNow")
 
-        println(s"Create experiment @ $time")
+        println(s"Create experiment @ $timeNow")
 
-        //Create experiment instance with produced graph
-        val exp = ProvGenExperiment(g)
 
-        println(s"Start running experiment @ $time")
+        println(s"Start running experiment @ $timeNow")
 
         //Test queries
-        exp.trial()
+        exp.trial(g)
 
         //Run the experiment
-        val results = exp.run(40, exp.fixedQueryStream(qSeed, Map("q1" -> 0.1, "q2" -> 0.3, "q3" -> 0.6)))
+        val results = exp.run(40, qStream, g)
 
-        println(s"Finish running experiment @ $time")
+        println(s"Finish running experiment @ $timeNow")
 
         //Results of experiment are futures, look at our choice of return type and think about this.
         import ExecutionContext.Implicits.global

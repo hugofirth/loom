@@ -37,7 +37,7 @@ case class L(a: Int) extends TestVertex
 case class M(a: Int) extends TestVertex
 case class N(a: Int) extends TestVertex
 case class O(a: Int) extends TestVertex
-case class P(a: Int) extends TestVertex
+//case class P(a: Int) extends TestVertex
 case class Q(a: Int) extends TestVertex
 case class R(a: Int) extends TestVertex
 case class S(a: Int) extends TestVertex

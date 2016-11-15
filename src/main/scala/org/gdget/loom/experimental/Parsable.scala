@@ -15,25 +15,25 @@
   * See the License for the specific language governing permissions and
   * limitations under the License.
   */
-package org.gdget.loom
+package org.gdget.loom.experimental
 
-import java.util.Calendar
+import org.gdget.Direction
 
-/** Description of Class
+/** Simple typeclass to provide the parsing methods needed to produce vertex objects from the JSon input in
+  * [[Main.jsonToNeighbourhood]]
   *
-  * @author hugofirth
+  * @see [[Main.jsonToNeighbourhood]]
   */
-package object util {
+trait Parsable[V] {
 
-  /** Method execution timer. Different than timer in Experiment, as this timer is not graph specific nor lazy */
-  def time[A](f: => A): (Long, A) = {
-    val t = System.nanoTime
-    val result = f
-    val elapsed = (System.nanoTime-t)/1000000
-    (elapsed, result)
-  }
+  /** Factory method for ProvGenVertex given a label string and an id Int */
+  def fromRepr(lbl: String, id: Int): Either[String, V]
 
-  /** Simple util method to return the current time as a string */
-  def timeNow = Calendar.getInstance.getTime.toString
+  /** Factory method for ProvGenVertex given an Edge label string, an id Int and a direction */
+  def fromEdgeRepr(eLbl: String, id: Int, dir: Direction): Either[String, V]
+}
 
+object Parsable {
+
+  @inline final def apply[V: Parsable] = implicitly[Parsable[V]]
 }

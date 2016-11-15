@@ -17,6 +17,7 @@
   */
 package org.gdget.loom
 
+
 import cats.kernel.laws.{GroupLaws, OrderLaws}
 import org.scalacheck.{Arbitrary, Cogen, Gen}
 

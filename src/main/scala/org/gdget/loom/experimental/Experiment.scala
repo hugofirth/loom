@@ -24,6 +24,7 @@ import org.gdget.{Edge, HPair}
 import org.gdget.partitioned._
 import org.gdget.partitioned.data._
 import org.gdget.loom.experimental.ProvGen.{ProvGenExperimentMeta, Vertex => ProvGenVertex}
+import org.gdget.loom.experimental.MusicBrainz.{MusicBrainzExperimentMeta, Vertex => MusicBrainzVertex}
 import cats._
 import cats.instances.all._
 import cats.syntax.semigroup._
@@ -45,19 +46,23 @@ sealed trait Experiment[V, E[_]] {
   implicit def E: Edge[E]
   implicit def V: Partitioned[V]
 
-  /** The graph over which the experiments are run */
-  def g: LogicalParGraph[V, E]
+//  /** The graph over which the experiments are run */
+//  def g: LogicalParGraph[V, E]
+
+
+  /** The Seed Int to pass to random generators, making experiments truly repeatable */
+   def seed: Int
 
   /** Map of query idenifiers to queries themselves (QueryIO objects) */
   def queries: Map[String, (Q[V, E], SimpleGraph[V, E])]
 
   /** Stream of queries made up from the values from `queries`.
-    * 
+    *
     * The relative frequency of each distinct query pattern changes over time in a periodic, repeating fashion which
     * simulates a pseudo-realistic pattern of workload change. If you plot the frequencies of a given query over time it
     * will resemble a sine wave.
     */
-  def periodicQueryStream(seed: Int): QStream[V, E] = {
+  def periodicQueryStream: QStream[V, E] = {
     def selectRange(ranges: Vector[(String, Double, Double)], offset: Double, value: Double) = {
       //Make sure offset is < 7
       val effectiveOffset = offset % 7
@@ -96,7 +101,7 @@ sealed trait Experiment[V, E[_]] {
     * The relative frequencies of each distinct query are fixed according to the map of query identifiers to doubles passed
     * in as a method parameter
     */
-  def fixedQueryStream(seed: Int, frequencies: Map[String, Double]): QStream[V, E] = {
+  def fixedQueryStream(frequencies: Map[String, Double]): QStream[V, E] = {
     require((frequencies.keySet &~ queries.keySet).isEmpty, "The frequencies Map must include entries for every query!")
     require(frequencies.values.reduceLeftOption(_ + _).getOrElse(0D) > 0.99, "Frequencies must sum to ~ 1.0!")
 
@@ -134,7 +139,7 @@ sealed trait Experiment[V, E[_]] {
     * As queries in the workload are read only, individual queries may be evaluated in their own threads. The Future
     * result of each is then combined and returned as Future[A: Monoid] has a Monoid.
     */ 
-  def run(n: Int, qs: QStream[V, E]): Future[Experiment.Result] = {
+  def run(n: Int, qs: QStream[V, E], g: LogicalParGraph[V, E]): Future[Experiment.Result] = {
     import ExecutionContext.Implicits.global
     import Experiment._
     import LogicalParGraph._
@@ -156,7 +161,7 @@ sealed trait Experiment[V, E[_]] {
   /** Simple method to test each of the specified queries in the experiment against the experiment's graph and print
     * the results to std out (should probably make this a bit better, but needs must when the devil calls)
     */
-  def trial(): Unit = queries.foreach { case (key, (q, gq)) =>
+  def trial(g: LogicalParGraph[V, E]): Unit = queries.foreach { case (key, (q, gq)) =>
     println(s"Testing query $key")
     val result = q.transK[Id].run(g)
     println(s"Printing result $result")
@@ -184,11 +189,15 @@ object Experiment {
   }
 
   /** Types in the Experiment ADT */
-  case class ProvGenExperiment(g: LogicalParGraph[ProvGenVertex, HPair])
+  case class ProvGenExperiment(seed: Int)
                               (implicit val E: Edge[HPair],
                                val V: Partitioned[ProvGenVertex]) extends Experiment[ProvGenVertex, HPair] with ProvGenExperimentMeta
 
-  //case object MusicBrainzExperiment
+
+  case class MusicBrainzExperiment(seed: Int)
+                                  (implicit val E: Edge[HPair],
+                                   val V: Partitioned[MusicBrainzVertex]) extends Experiment[MusicBrainzVertex, HPair] with MusicBrainzExperimentMeta
+
   //case object DBLPExperiment
   //case object DBPediaExperiment
 }
@@ -200,8 +209,6 @@ object Experiment {
 trait ExperimentMeta[V, E[_]] { self: Experiment[V, E] =>
 
   import Experiment._
-
-  def g: LogicalParGraph[V, E]
 
   def queries: Map[String, (Q[V, E], SimpleGraph[V, E])]
 }

@@ -17,7 +17,11 @@
   */
 package org.gdget.loom.experimental
 
-import org.gdget.partitioned.PartId
+import cats._
+import org.gdget.HPair
+import org.gdget.data.SimpleGraph
+import org.gdget.loom.experimental.Experiment.Q
+import org.gdget.partitioned.{PartId, Partitioned}
 
 
 object MusicBrainz {
@@ -45,4 +49,26 @@ object MusicBrainz {
   case class Track(id: Int, part: Option[PartId]) extends Vertex
   case class Url(id: Int, part: Option[PartId]) extends Vertex
   case class Work(id: Int, part: Option[PartId]) extends Vertex
+
+  object Vertex {
+
+    /** MusicBrainz Vertex typeclass instances */
+
+    implicit val mBVPartitioned = new Partitioned[Vertex] {
+      override def partition(v: Vertex): Option[PartId] = v.part
+    }
+
+    implicit val mBVShow = new Show[Vertex] {
+      override def show(f: Vertex): String = f.toString
+    }
+
+    implicit val mBVEq = new Eq[Vertex] {
+      override def eqv(x: Vertex, y: Vertex): Boolean = x.equals(y)
+    }
+  }
+
+  /** Trait containing information needed for running MusicBrainz experiments, including graph location and queries */
+  trait MusicBrainzExperimentMeta extends ExperimentMeta[Vertex, HPair] { self: Experiment[Vertex, HPair] =>
+    override def queries: Map[String, (Q[Vertex, HPair], SimpleGraph[Vertex, HPair])] = ???
+  }
 }
