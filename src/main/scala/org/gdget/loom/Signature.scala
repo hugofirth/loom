@@ -114,16 +114,18 @@ object Signature {
 
   private final case class Signature3[P <: Field] (f1: Short, f2: Short, f3: Short, field: P) extends Signature[P] {
 
+    //TODO: Why aren't all these fields lazy vals?
+
     //TODO: Work out why this was a sorted set rather than a bitset?
     /** The set of distinct factors which make up this graph signature */
-    protected def factorSet = SortedSet(f1, f2, f3)
+    protected lazy val factorSet: SortedSet[Int] = SortedSet(f1, f2, f3)
 
     /** The factor multipliers, or number of times each factor appears in the signature, bit packed into an array of Ints
       *
       * Effectively a Map[Int, Int] where each Int -> Int entry is represented by a single Int (because each factor and its
       * multiplier are guaranteed to take less than 2 bytes to represent)
       */
-    protected def factorMultiSet = {
+    protected lazy val factorMultiSet: Seq[Int] = {
       //This seems horrendously over the top premature optimisation for a little space saving. Are we not compute bound anyway?
       List(f1, f2, f3).groupBy(identity).map(p => (p._1 << 16) | p._2.size).toArray
     }
@@ -135,6 +137,8 @@ object Signature {
     override def factors: List[Int] = List(f1, f2, f3)
 
     override def toString: String = s"Signature($value, Z${field.value}, $factorMultiSet)"
+
+    //TODO: Override signature
   }
 
   def forAdditionToEdges[V: Labelled, E[_]: Edge, P <: Field](added: E[V], context: Set[E[V]],

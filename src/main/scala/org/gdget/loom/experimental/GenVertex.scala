@@ -39,5 +39,6 @@ trait GenVertex {
     case _ => false
   }
 
-  override def hashCode(): Int = id.##
+  //TODO: Double check my reasoning on the below
+  override def hashCode(): Int = id
 }

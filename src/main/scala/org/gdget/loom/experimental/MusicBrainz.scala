@@ -18,6 +18,7 @@
 package org.gdget.loom.experimental
 
 import cats._
+import cats.implicits._
 import org.gdget.{Direction, HPair}
 import org.gdget.data.SimpleGraph
 import org.gdget.data.query.QueryBuilder
@@ -198,8 +199,8 @@ object MusicBrainz {
       val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
       for {
         as <- op.getAll[Area]
-        ats <- as.filter(_ => Random.nextInt(100) > 89).traverse(op.traverseAllNeighbours[Artist])
-        lbls <- ats.flatten.traverse(op.traverseAllNeighbours[Label])
+        ats <- as.traverse(op.traverseAllNeighbours[Artist])
+        lbls <- ats.flatten.take(1000).traverse(op.traverseAllNeighbours[Label])
         as2 <- lbls.flatten.traverse(op.traverseAllNeighbours[Area])
       } yield as2.flatten
     }
@@ -208,10 +209,10 @@ object MusicBrainz {
       val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
       for {
         ats <- op.getAll[Artist]
-        acs <- ats.filter(_ => Random.nextInt(100) > 89).traverse(op.traverseAllNeighbours[ArtistCredit])
+        acs <- ats.take(100).traverse(op.traverseAllNeighbours[ArtistCredit])
         recs <- acs.flatten.traverse(op.traverseAllNeighbours[Recording])
-        acs2 <- recs.flatten.traverse(op.traverseAllNeighbours[ArtistCredit])
-        ats2 <- acs2.flatten.traverse(op.traverseAllNeighbours[Artist])
+        acs2 <- recs.flatten.take(100).traverse(op.traverseAllNeighbours[ArtistCredit])
+        ats2 <- acs2.flatten.take(100).traverse(op.traverseAllNeighbours[Artist])
       } yield ats2.flatten
     }
 
@@ -220,28 +221,30 @@ object MusicBrainz {
       val op = QueryBuilder[LogicalParGraph, Vertex, HPair]
       for {
         ats <- op.getAll[Artist]
-        acs <- ats.filter(_ => Random.nextInt(100) > 89).traverse(op.traverseAllNeighbours[ArtistCredit])
+        acs <- ats.take(100).traverse(op.traverseAllNeighbours[ArtistCredit])
         tks <- acs.flatten.traverse(op.traverseAllNeighbours[Track])
         mds <- tks.flatten.traverse(op.traverseAllNeighbours[Medium])
       } yield mds.flatten
     }
 
-//    val gQ1 = SimpleGraph[Vertex, HPair](
-//      Entity(1, None) -> Entity(2, None),
-//      Entity(2, None) -> Entity(3, None)
-//    )
-//
-//    val gQ2 = SimpleGraph[Vertex, HPair](
-//      Agent(1, None) ->  Activity(2, None),
-//      Activity(2, None) -> Entity(3, None),
-//      Entity(3, None) -> Entity(4, None),
-//      Entity(4, None) -> Activity(5, None),
-//      Activity(5, None) -> Agent(6, None)
-//    )
-//
-//    val gQ3 = SimpleGraph[Vertex, HPair](
-//      Agent(1, None) -> Activity(2, None)
-//    )
+    val gQ1 = SimpleGraph[Vertex, HPair](
+      Area(1, None) -> Artist(2, None),
+      Artist(2, None) -> Label(3, None),
+      Label(3, None) -> Area(4, None)
+    )
+
+    val gQ2 = SimpleGraph[Vertex, HPair](
+      Artist(1, None) ->  ArtistCredit(2, None),
+      ArtistCredit(2, None) -> Recording(3, None),
+      Recording(3, None) -> ArtistCredit(4, None),
+      ArtistCredit(4, None) -> Artist(5, None)
+    )
+
+    val gQ3 = SimpleGraph[Vertex, HPair](
+      Artist(1, None) -> ArtistCredit(2, None),
+      ArtistCredit(2, None) -> Track(3, None),
+      Track(3, None) -> Medium(4, None)
+    )
 
 
     override def queries: Map[String, (Q[Vertex, HPair], SimpleGraph[Vertex, HPair])] =

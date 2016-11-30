@@ -29,6 +29,7 @@ import language.higherKinds
 import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.collection.immutable.{Queue, SortedSet}
+import scala.collection.mutable.ListBuffer
 
 /** The Loom graph partitioner. TODO: Expand this comment ....
   *
@@ -151,28 +152,45 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
     assignments + (e -> winner)
   }
 
+  //TODO: Something terribly wrong with the performance of the below, must find out what
   private def ldg(e: E[V], context: AdjBuilder[V]): (E[V], PartId) = {
 
     //TODO: Find some way of passing in the whole neighbourhood here, its not fair otherwise.
-    def neighbourPartitions(v: V) = context.get(v).fold(List.empty[PartId]) { case (pId, in, out) =>
-      pId :: (in.keys ++ out.keys).flatMap(context.get).map(_._1).toList
+    def neighbourPartitions(v: V) = context.get(v) match {
+      case Some((pId, in, out)) => pBuffer(pId, in, out)
+      case None => emptyBuffer
+    }
+
+    //Tracing to make this more VisualVM friendly
+    def emptyBuffer = ListBuffer.empty[PartId]
+
+    def pBuffer(pId: PartId, in: AbsMap[V, Set[Unit]], out: AbsMap[V, Set[Unit]]) = {
+      ListBuffer(pId) ++= (in.keysIterator ++ out.keysIterator).flatMap(context.get).map(_._1)
     }
 
     //Get the vertices from e
     val (l,r) = Edge[E].vertices(e)
     //Get the adjLists of e's vertices from context if they exist
-    val parts = neighbourPartitions(l) ::: neighbourPartitions(r)
+    val parts = neighbourPartitions(l) ++= neighbourPartitions(r)
     //find the most common part or the least used partition
     val partitionCounts = parts.groupBy(identity).mapValues(_.size.toDouble)
     //Adjust partition counts to maintain balance and find the biggest scoring partition
 
-    val common = partitionCounts.reduceLeftOption { (highScore, current) =>
-      //Get the score of the current partition
-      val pScore = sizes.get(current._1).fold(0D) { s => current._2 * (1 - (s / capacity)) }
+    //Backfill partitioncounts to include 0 entries for empty partitions
+    val allPartitionCounts = (0 until k).map(_.part).map(p => p -> partitionCounts.getOrElse(p, 0D))
+
+    //Calculate scores
+    val scores = allPartitionCounts.map { case (pId, numNeighbours) =>
+      //Find size of this partition, then weight neighbours by its size relative to max partition capacity "fullness"
+      val pScore = sizes.get(pId).fold(0D) { s => numNeighbours * (1 - s / capacity) }
+      //Return pair of this partId and its score
+      (pId, pScore)
+    }
+    val common = scores.reduceLeftOption { (highScore, current) =>
       //Check if it is greater than the current highscore, then carry greatest scoring partition forward
-      if(pScore > highScore._2) {
+      if(current._2 > highScore._2) {
         current
-      } else if(pScore == highScore._2) {
+      } else if(current._2 == highScore._2) {
         val cSize = sizes.get(current._1).map(current -> _)
         val hSize = sizes.get(highScore._1).map(highScore -> _)
         (cSize |@| hSize).map(minUsed).map(_._1).getOrElse(highScore)

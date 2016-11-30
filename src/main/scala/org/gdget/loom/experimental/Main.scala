@@ -166,9 +166,9 @@ object Main {
 
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
-//      val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
+      val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
 //      val p = HashPartitioner(conf.numK, 0.part)
-      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
+//      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
       println(s"Start parsing json in to graph @ $timeNow")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -186,14 +186,16 @@ object Main {
 
       println(s"Create the partitioner @ $timeNow")
 
+      //TODO: Introduce yet more parameters for the length of the stream to "train" the trie with and the motif threshold
       val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[V, HPair, P](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
       val motifs = trie.motifsFor(0.6)
 
       //Create the Loom partitioner for LogicalParGraph, V, HPair
+      //TODO: Introduce parameters for window size and alpha
       val p = Loom[LogicalParGraph, V, HPair, P](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
-        motifs, 10000, 1.5, conf.prime)
+        motifs, 1000, 1.5, conf.prime)
 
 
       val bldr = mutable.Map.empty[V, (PartId, Map[V, Set[Unit]], Map[V, Set[Unit]])]
@@ -202,8 +204,9 @@ object Main {
     }
 
     //For each stream order
-    List(conf.bfs, conf.rand, conf.dfs).map { order =>
+    List(conf.bfs, conf.dfs, conf.rand).map { order =>
       //Get json dump = - create Stream[UNeighbourhood[V, HPair]] with GraphReader
+      println(s"[INFO]------ Running experiment with graph at path: $order")
 
       //Fold in order to deal with possible parsing errors
       GraphReader.readNeighbourhoods(order).fold({ e =>
@@ -213,7 +216,7 @@ object Main {
       }, { neighbours =>
 
         println(s"Finished parsing json @ $timeNow")
-//        val qStream = exp.fixedQueryStream(Map("q1" -> 0.1, "q2" -> 0.3, "q3" -> 0.6))
+        val qStream = exp.fixedQueryStream(Map("q1" -> 0.6, "q2" -> 0.3, "q3" -> 0.1))
 
         val g = altPartitioning(neighbours)
 //        val g = loomPartitioning(qStream, neighbours.flatMap(n => n.edges))
@@ -230,22 +233,22 @@ object Main {
 
         println(s"Start running experiment @ $timeNow")
 
-//        //Test queries
-//        exp.trial(g)
-//
-//        //Run the experiment
-//        val results = exp.run(40, qStream, g)
-//
-//        println(s"Finish running experiment @ $timeNow")
-//
-//        //Results of experiment are futures, look at our choice of return type and think about this.
-//        import ExecutionContext.Implicits.global
-//        results.onSuccess {
-//          case Result(t, ipt) => println(s"A ${conf.numK}-way partitioning of the ProvGen graph, generated using " +
-//            s"Loom, suffered $ipt when executing its workload over $t seconds")
-//        }
-//
-//        Await.result(results, Duration.Inf)
+        //Test queries
+        exp.trial(g)
+
+        //Run the experiment
+        val results = exp.run(40, qStream, g)
+
+        println(s"Finish running experiment @ $timeNow")
+
+        //Results of experiment are futures, look at our choice of return type and think about this.
+        import ExecutionContext.Implicits.global
+        results.onSuccess {
+          case Result(t, ipt) => println(s"A ${conf.numK}-way partitioning of the ProvGen graph, generated using " +
+            s"Loom, suffered $ipt when executing its workload over $t seconds")
+        }
+
+        Await.result(results, Duration.Inf)
 
       })
 
