@@ -31,14 +31,13 @@ import scala.collection.{Map => AbsMap}
 /** The LDG streaming graph partitioner described by Stanton & Kliot (http://dl.acm.org/citation.cfm?id=2339722) */
 case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
 
-  //TODO: Move to proper error handling, by using either?
+  //TODO: Move to proper error handling, by using either?, probably with private constructor and an Option[] factory?
   require(capacity>0, s"You must indicate a partition capacity of greater than 0 to LDG. You have provided a capacity of $capacity")
   require(k>0, s"You must have 1 or more partitions! You have provided a k of $k")
 
-  //TODO: Investigate possible resetting of pSizes map here
-  val unused = (0 until k).map(_.part).filterNot(sizes.contains)
+  private val unused = (0 until k).map(_.part).filterNot(sizes.contains)
 
-  val pSizes = sizes ++ unused.map(_ -> 0)
+  private val pSizes = sizes ++ unused.map(_ -> 0)
 
   def partitionOf[V: Partitioned, E[_]: Edge](n: UNeighbourhood[V, E],
                                                             adj: AbsMap[V, (PartId, _, _)]): Option[PartId] = {
@@ -47,18 +46,25 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
 
     //Check if the neighbours of a vertex v are assigned yet (exist as entries in the adjacency matrix)
     //NOTE!!!!! The below only works if our vertices obey the partId != equality law
-    val existingNeighbours = n.neighbours.flatMap(adj.get).toList
-    val neighbourPartitions = existingNeighbours.map(_._1)
+    val existingNeighbours = n.neighboursIterator.flatMap(adj.get)
+    val neighbourPartitions = existingNeighbours.map(_._1).toList
     val partitionCounts = neighbourPartitions.groupBy(identity).mapValues(_.size.toDouble)
     //Adjust partition counts to maintain balance and find the biggest scoring partition
 
-    partitionCounts.reduceLeftOption { (highScore, current) =>
-      //Get the score of the current partition
-      val pScore = pSizes.get(current._1).fold(0D) { s => current._2 * (1 - (s / capacity)) }
-      //Check if it is greater than the current highscore, then carry greatest scoring partition forward
-      if(pScore > highScore._2) {
+    //Backfill partitioncounts to include 0 entries for empty partitions
+    val allPartitionCounts = (0 until k).map(_.part).map(p => p -> partitionCounts.getOrElse(p, 0D))
+    //Calculate scores
+    val scores = allPartitionCounts.map { case (pId, numNeighbours) =>
+      //Find size of this partition, then weight neighbours by its size relative to max partition capacity "fullness"
+      val pScore = pSizes.get(pId).fold(0D) { s => numNeighbours * (1 - s / capacity) }
+      //Return pair of this partId and its score
+      (pId, pScore)
+    }
+    scores.reduceLeftOption { (highScore, current) =>
+      //Check if current's score is greater than the highscore, then carry greatest scoring partition forward
+      if(current._2 > highScore._2) {
         current
-      } else if(pScore == highScore._2) {
+      } else if(current._2 == highScore._2) {
         val cSize = pSizes.get(current._1).map(current -> _)
         val hSize = pSizes.get(highScore._1).map(highScore -> _)
         (cSize |@| hSize).map(minUsed).map(_._1).getOrElse(highScore)
@@ -72,13 +78,14 @@ case class LDGPartitioner(capacity: Int, sizes: Map[PartId, Int], k: Int) {
 
 }
 
+
 /** The Fennel partitioner described by Tsourakakis et al. (http://dl.acm.org/citation.cfm?id=2556213) */
 case class FennelPartitioner(sizes: Map[PartId, Int], k: Int, numV: Int, numE: Int) {
 
 
-  val unused = (0 until k).map(_.part).filterNot(sizes.contains)
+  private val unused = (0 until k).map(_.part).filterNot(sizes.contains)
 
-  val pSizes = sizes ++ unused.map(_ -> 0)
+  private val pSizes = sizes ++ unused.map(_ -> 0)
 
   def partitionOf[V: Partitioned, E[_]: Edge](n: UNeighbourhood[V, E], adj: AbsMap[V, (PartId, _, _)]): Option[PartId] = {
 
@@ -91,22 +98,36 @@ case class FennelPartitioner(sizes: Map[PartId, Int], k: Int, numV: Int, numE: I
        where theta equals 1.5 and alpha equals sqrt(k) * (|E|)/(|V|^theta) */
 
     //Find the partition with the most of v's existing neighbours (i.e. greatest N(v) /\ Pi)
-    val existingNeighbours = n.neighbours.flatMap(adj.get).toList
-    val neighbourPartitions = existingNeighbours.map(_._1)
+    val existingNeighbours = n.neighboursIterator.flatMap(adj.get)
+    val neighbourPartitions = existingNeighbours.map(_._1).toList
     val partitionCounts = neighbourPartitions.groupBy(identity).mapValues(_.size.toDouble)
 
     //Find the partition which maximises the score for fennel's function
-    partitionCounts.reduceLeftOption { (highScore, current) =>
-      val (partition, numNeighbours) = current
 
+    //Backfill partitionCounts to include 0 entries for empty partitions
+    val allPartitionCounts = (0 until k).map(_.part).map(p => p -> partitionCounts.getOrElse(p, 0D))
+
+    //Filter out partitions which voilate 1.1 balance threshold
+    val freePartitionCounts = allPartitionCounts.filter { case (pId, numNeighbours) =>
+      pSizes.get(pId).exists(_ < (1.1 * numV/k))
+    }
+
+    //Calculate the scores
+    //TODO: Rather than folding over the option, why not produce a list of Option then flattening?
+    val scores = freePartitionCounts.map { case(pId, numNeighbours) =>
       //calculate alpha
       val alpha = math.sqrt(k) * (numE / math.pow(numV, 1.5))
       //calculate the score of the current partition
-      val score = numNeighbours - (alpha * 0.75 * pSizes.get(partition).map(_.toDouble).fold(0D)(math.sqrt))
+      val pScore = numNeighbours - (alpha * 0.75 * pSizes.get(pId).map(_.toDouble).fold(0D)(math.sqrt))
+      //Return the pair of this partId and its score
+      (pId, pScore)
+    }
+
+    scores.reduceLeftOption { (highScore, current) =>
       //If score is higher than current score, then carry greatest scoring partition forward
-      if(score > highScore._2) {
+      if(current._2 > highScore._2) {
         current
-      } else if(score == highScore._2) {
+      } else if(current._2 == highScore._2) {
         //If the scores are even break ties by selecting the partition with more free space
         val cSize = pSizes.get(current._1).map(current -> _)
         val hSize = pSizes.get(highScore._1).map(highScore -> _)
@@ -118,8 +139,6 @@ case class FennelPartitioner(sizes: Map[PartId, Int], k: Int, numV: Int, numE: I
     //In the event that a vertex has no neighbours in any partition, assign them to the emptiest partition of the k
   }
 }
-
-
 
 case class HashPartitioner(k: Int, nextPart: PartId)
 

@@ -15,6 +15,7 @@ libraryDependencies ++= Seq(
   "org.scalacheck" %% "scalacheck" % "1.13.4" % "test",
   "org.typelevel" %% "discipline" % "0.7.1" % "test",
   "org.typelevel" %% "cats" % "0.8.0",
+  "org.typelevel" %% "dogs-core" % "0.4.0",
   "org.gdget" %% "core" % "0.1",
   "org.gdget" %% "partitioned" % "0.1",
   "org.apache.commons" % "commons-math3" % "3.6.1",

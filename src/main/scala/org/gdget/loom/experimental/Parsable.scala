@@ -26,10 +26,10 @@ import org.gdget.Direction
   */
 trait Parsable[V] {
 
-  /** Factory method for ProvGenVertex given a label string and an id Int */
+  /** Factory method for Vertex given a label string and an id Int */
   def fromRepr(lbl: String, id: Int): Either[String, V]
 
-  /** Factory method for ProvGenVertex given an Edge label string, an id Int and a direction */
+  /** Factory method for Vertex given an Edge label string, an id Int and a direction */
   def fromEdgeRepr(eLbl: String, id: Int, dir: Direction): Either[String, V]
 }
 
