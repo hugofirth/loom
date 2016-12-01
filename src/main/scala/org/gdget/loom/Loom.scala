@@ -153,28 +153,33 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
   }
 
   //TODO: Something terribly wrong with the performance of the below, must find out what
+  //How about just being naive and assigning the edge to the emptiest partition with which it shares a vertex (or the emptiest partition)
   private def ldg(e: E[V], context: AdjBuilder[V]): (E[V], PartId) = {
 
     //TODO: Find some way of passing in the whole neighbourhood here, its not fair otherwise.
-    def neighbourPartitions(v: V) = context.get(v) match {
-      case Some((pId, in, out)) => pBuffer(pId, in, out)
-      case None => emptyBuffer
-    }
-
-    //Tracing to make this more VisualVM friendly
-    def emptyBuffer = ListBuffer.empty[PartId]
-
-    def pBuffer(pId: PartId, in: AbsMap[V, Set[Unit]], out: AbsMap[V, Set[Unit]]) = {
-      ListBuffer(pId) ++= (in.keysIterator ++ out.keysIterator).flatMap(context.get).map(_._1)
+    def neighboursIterator(v: V) = context.get(v).fold(Iterator.empty: Iterator[V]) { n =>
+      n._2.keysIterator ++ n._3.keysIterator
     }
 
     //Get the vertices from e
     val (l,r) = Edge[E].vertices(e)
-    //Get the adjLists of e's vertices from context if they exist
-    val parts = neighbourPartitions(l) ++= neighbourPartitions(r)
-    //find the most common part or the least used partition
-    val partitionCounts = parts.groupBy(identity).mapValues(_.size.toDouble)
+    //Get the entries for e's neighbours if they exist
+    val existingNeighbours = (neighboursIterator(l) ++ neighboursIterator(r)).flatMap(context.get)
+    //Get neighbour partitions and turn them into a list
+    val neighbourPartitions = existingNeighbours.map(_._1).toList
+    //find the most common partition amongst neighbours
+    val partitionCounts = neighbourPartitions.groupBy(identity).mapValues(_.size.toDouble)
     //Adjust partition counts to maintain balance and find the biggest scoring partition
+
+//    //Potential performance improvement because while loops
+//    val neighbourPartitions = existingNeighbours.map(_._1)
+//
+//    val partitionCounts = mutable.HashMap[PartId, Double]()
+//    while(neighbourPartitions.hasNext) {
+//      val nPart = neighbourPartitions.next()
+//      val currentCount = partitionCounts.getOrElse(nPart, 0D)
+//      partitionCounts(nPart) = currentCount + 1
+//    }
 
     //Backfill partitioncounts to include 0 entries for empty partitions
     val allPartitionCounts = (0 until k).map(_.part).map(p => p -> partitionCounts.getOrElse(p, 0D))
@@ -205,12 +210,40 @@ final class Loom[G[_, _[_]], V: Partitioned : Labelled, E[_]: Edge, P <: Field] 
     (e, common)
   }
 
+
+  //TODO: Improve this method to make it more idiomatic
+  private def greedy(e: E[V], context: AdjBuilder[V]): (E[V], PartId) = {
+    //Get the vertices
+    val (l,r) = Edge[E].vertices(e)
+    //Get their adj Entries if they exist
+    val lEntry = context.get(l)
+    val rEntry = context.get(r)
+
+    //Filter out partitions which voilate 1.1 balance threshold
+    def threshold(pId: PartId) = sizes.get(pId).exists(_ < (1.1 * capacity))
+
+    //Get the size of each partition and pick the least used or a default
+    val part = (lEntry, rEntry) match {
+      case (Some((lP, _, _)), Some((rP, _, _))) if threshold(lP) && threshold(rP) =>
+        val lSize = sizes.get(lP).map(lP -> _)
+        val rSize = sizes.get(rP).map(rP -> _)
+        (lSize |@| rSize).map(minUsed).map(_._1).getOrElse(0.part)
+      case (_, Some((rP, _, _))) if threshold(rP) => rP
+      case (Some((lP, _, _)), _) if threshold(lP) => lP
+      case (_, _) => sizes.reduceLeft(minUsed)._1
+    }
+
+    //Return the edge and its part
+    (e, part)
+  }
+
   def addToWindow(e: E[V], context: AdjBuilder[V]): (Loom[G,V,E,P], Set[(E[V], PartId)]) = {
 
     //Check if e is a motif, if not then assign immediately
     if(!motifs.root.children.contains(factorFor(e, Set.empty[E[V]]))) {
       //Assign E with LDG like heuristic
-      (this, Set(ldg(e, context)))
+//      (this, Set(ldg(e, context)))
+      (this, Set(greedy(e, context)))
     } else {
       //If e *is* a motif, then add it to the window and update matchList
       val dWindowSize = this.windowSize + 1
@@ -311,10 +344,9 @@ object Loom {
       override def partition[CC <: AdjBuilder[V]](p: Loom[G, V, E, P], input: E[V],
                                                   context: CC): (Loom[G, V, E, P], List[(E[V], PartId)]) = {
 
-       if(context.size % 10000 == 0 ) {
-         //TODO: Work out why we get so many repeats (presumably drops) for bfs. Is the dropping a good strategy?
-         println(s"Added ${context.size} vertices")
-       }
+//       if(context.size % 10000 == 0 ) {
+//         println(s"Added ${context.size} vertices")
+//       }
 
 
         //Partition the edge

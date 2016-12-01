@@ -37,6 +37,7 @@ import scala.collection.mutable
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext}
 import scala.language.higherKinds
+import scala.util.Random
 
 /** Entry point for the Loom experiments
   *
@@ -166,9 +167,9 @@ object Main {
 
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
-      val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
+//      val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
 //      val p = HashPartitioner(conf.numK, 0.part)
-//      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
+      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
       println(s"Start parsing json in to graph @ $timeNow")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -190,7 +191,7 @@ object Main {
       val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[V, HPair, P](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
-      val motifs = trie.motifsFor(0.6)
+      val motifs = trie.motifsFor(0.5)
 
       //Create the Loom partitioner for LogicalParGraph, V, HPair
       //TODO: Introduce parameters for window size and alpha
@@ -216,10 +217,24 @@ object Main {
       }, { neighbours =>
 
         println(s"Finished parsing json @ $timeNow")
-        val qStream = exp.fixedQueryStream(Map("q1" -> 0.6, "q2" -> 0.3, "q3" -> 0.1))
+        val qStream = exp.fixedQueryStream(Map("q1" -> 0.5, "q2" -> 0.3, "q3" -> 0.2))
 
-        val g = altPartitioning(neighbours)
-//        val g = loomPartitioning(qStream, neighbours.flatMap(n => n.edges))
+//        val g = altPartitioning(neighbours)
+        val g = loomPartitioning(qStream, neighbours.flatMap(n => n.edges))
+
+        val pSummaries = g.partitions.foreach { p =>
+
+          val eSample = p.edges.map(e => ("""[A-Za-z]+\(""".r findAllIn e.toString).mkString(" -> "))
+          val counts = mutable.HashMap[String, Int]()
+          while(eSample.hasNext) {
+            val eString = eSample.next()
+            val eCount = counts.getOrElse(eString, 0)
+            counts(eString) = eCount + 1
+          }
+          println("============")
+          println(s"${counts.toString()}")
+          println("============")
+        }
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
 

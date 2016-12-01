@@ -118,7 +118,7 @@ object Signature {
 
     //TODO: Work out why this was a sorted set rather than a bitset?
     /** The set of distinct factors which make up this graph signature */
-    protected lazy val factorSet: SortedSet[Int] = SortedSet(f1, f2, f3)
+    protected lazy val factorSet: SortedSet[Int] = BitSet(f1, f2, f3)
 
     /** The factor multipliers, or number of times each factor appears in the signature, bit packed into an array of Ints
       *
@@ -127,7 +127,7 @@ object Signature {
       */
     protected lazy val factorMultiSet: Seq[Int] = {
       //This seems horrendously over the top premature optimisation for a little space saving. Are we not compute bound anyway?
-      List(f1, f2, f3).groupBy(identity).map(p => (p._1 << 16) | p._2.size).toArray
+      List(f1, f2, f3).sorted.groupBy(identity).map(p => (p._1 << 16) | p._2.size).toArray
     }
 
     /** Get the product of all factors in this signature, as a BigInt */
@@ -138,7 +138,18 @@ object Signature {
 
     override def toString: String = s"Signature($value, Z${field.value}, $factorMultiSet)"
 
-    //TODO: Override signature
+    /** Breaking the equals contract ... just a little
+      */
+    override def equals(other: Any): Boolean = other match {
+      case that: Signature3[_] =>
+        (this eq that) || this.value == that.value
+      case that: Signature[_] =>
+        (this eq that) ||
+          (that canEqual this) &&
+            factorSet == that.factorSet &&
+            factorMultiSet == that.factorMultiSet
+      case _ => false
+    }
   }
 
   def forAdditionToEdges[V: Labelled, E[_]: Edge, P <: Field](added: E[V], context: Set[E[V]],
@@ -146,8 +157,8 @@ object Signature {
 
     val (l, r) = Edge[E].vertices(added)
     //Work out existing degree for l & r
-    val lDeg = context.count(e => Edge[E].left(added) == l || Edge[E].right(added) == l)
-    val rDeg = context.count(e => Edge[E].left(added) == r || Edge[E].right(added) == r)
+    val lDeg = context.count(e => Edge[E].left(e) == l || Edge[E].right(e) == l)
+    val rDeg = context.count(e => Edge[E].left(e) == r || Edge[E].right(e) == r)
 
     //Calculate's edge factor and degree factors for l & r
     val rDegFactor = (Labelled[V].label(r) + (rDeg + 1)) mod field
@@ -155,9 +166,9 @@ object Signature {
     val eFactor = (Labelled[V].label(l) - Labelled[V].label(r)) mod field
 
     //Lets sort the factors - yay for pattern matching assignment
-    val List(_1, _2, _3) = List(rDegFactor, lDegFactor, eFactor).sorted
+//    val List(_1, _2, _3) = List(rDegFactor, lDegFactor, eFactor).sorted
 
-    Signature3(_1, _2, _3, field)
+    Signature3(rDegFactor, lDegFactor, eFactor, field)
   }
 
   def forAdditionToGraph[G[_, _[_]], V: Labelled, E[_]: Edge, P <: Field](added: E[V], context: G[V, E], field: P)

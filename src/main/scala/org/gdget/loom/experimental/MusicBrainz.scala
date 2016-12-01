@@ -210,7 +210,7 @@ object MusicBrainz {
       for {
         ats <- op.getAll[Artist]
         acs <- ats.take(100).traverse(op.traverseAllNeighbours[ArtistCredit])
-        recs <- acs.flatten.traverse(op.traverseAllNeighbours[Recording])
+        recs <- acs.flatten.traverse(op.traverseAllNeighbours[Track])
         acs2 <- recs.flatten.take(100).traverse(op.traverseAllNeighbours[ArtistCredit])
         ats2 <- acs2.flatten.take(100).traverse(op.traverseAllNeighbours[Artist])
       } yield ats2.flatten
