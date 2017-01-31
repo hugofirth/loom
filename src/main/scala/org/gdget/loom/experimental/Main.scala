@@ -75,7 +75,7 @@ object Main {
 
     val base = "/Users/hugofirth/Desktop/Data/Loom/musicbrainz/"
     val conf = Config(dfs = base + "musicbrainz_dfs.json", bfs = base + "musicbrainz_bfs.json",
-      rand = base + "musicbrainz_rand.json", stoch = "", numK = 8, numV = 4589492, numE = 7752260, prime = P._251)
+      rand = base + "musicbrainz_rand.json", stoch = "", numK = 32, numV = 4589492, numE = 7752260, prime = P._251)
 
     //Create the Labelled Instance for ProvGenVertex. Doing it here means we have access to the prime value passed in
     //  conf, but it still feels horrible. This whole file needs to be sorted, split out etc...
@@ -168,8 +168,8 @@ object Main {
       //Create LDG partitioner for LogicalParGraph, ProvGenVertex, HPair, which means we need to know the final size
       // of the graph (conf value) as well as k (number of partitions)
 //      val p = LDGPartitioner(conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK)
-//      val p = HashPartitioner(conf.numK, 0.part)
-      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
+      val p = HashPartitioner(conf.numK, 0.part)
+//      val p = FennelPartitioner(Map.empty[PartId, Int], conf.numK, conf.numV, conf.numE)
       println(s"Start parsing json in to graph @ $timeNow")
 
       //Use Partitioner[LDG].partition to fold over the stream, accumulating partitioned neighbourhoods with their new
@@ -191,12 +191,12 @@ object Main {
       val trie = qStream.take(40).map(_._2).foldLeft(TPSTry.empty[V, HPair, P](conf.prime)) { (trie, g) =>
         trie.add(g)
       }
-      val motifs = trie.motifsFor(0.5)
+      val motifs = trie.motifsFor(0.6)
 
       //Create the Loom partitioner for LogicalParGraph, V, HPair
       //TODO: Introduce parameters for window size and alpha
       val p = Loom[LogicalParGraph, V, HPair, P](conf.numV/conf.numK, Map.empty[PartId, Int], conf.numK,
-        motifs, 1000, 1.5, conf.prime)
+        motifs, 100, 1.5, conf.prime)
 
 
       val bldr = mutable.Map.empty[V, (PartId, Map[V, Set[Unit]], Map[V, Set[Unit]])]
@@ -217,24 +217,24 @@ object Main {
       }, { neighbours =>
 
         println(s"Finished parsing json @ $timeNow")
-        val qStream = exp.fixedQueryStream(Map("q1" -> 0.5, "q2" -> 0.3, "q3" -> 0.2))
+        val qStream = exp.fixedQueryStream(Map("q1" -> 0.4, "q2" -> 0.1, "q3" -> 0.5))
 
-//        val g = altPartitioning(neighbours)
-        val g = loomPartitioning(qStream, neighbours.flatMap(n => n.edges))
+        val g = altPartitioning(neighbours)
+//        val g = loomPartitioning(qStream, neighbours.flatMap(n => n.edges))
 
-        val pSummaries = g.partitions.foreach { p =>
-
-          val eSample = p.edges.map(e => ("""[A-Za-z]+\(""".r findAllIn e.toString).mkString(" -> "))
-          val counts = mutable.HashMap[String, Int]()
-          while(eSample.hasNext) {
-            val eString = eSample.next()
-            val eCount = counts.getOrElse(eString, 0)
-            counts(eString) = eCount + 1
-          }
-          println("============")
-          println(s"${counts.toString()}")
-          println("============")
-        }
+//        val pSummaries = g.partitions.foreach { p =>
+//
+//          val eSample = p.edges.map(e => ("""[A-Za-z]+\(""".r findAllIn e.toString).mkString(" -> "))
+//          val counts = mutable.HashMap[String, Int]()
+//          while(eSample.hasNext) {
+//            val eString = eSample.next()
+//            val eCount = counts.getOrElse(eString, 0)
+//            counts(eString) = eCount + 1
+//          }
+//          println("============")
+//          println(s"${counts.toString()}")
+//          println("============")
+//        }
 
         val pSizes = g.partitions.map(_.size).mkString("(", ", ", ")")
 

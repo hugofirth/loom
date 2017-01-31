@@ -163,8 +163,10 @@ sealed trait Experiment[V, E[_]] {
     */
   def trial(g: LogicalParGraph[V, E]): Unit = queries.foreach { case (key, (q, gq)) =>
     println(s"Testing query $key")
-    val result = q.transK[Id].run(g)
+    val countInterpreter = countingInterpreterK[Id, V, E]
+    val result = q.transKWith[Id](countInterpreter).run(g)
     println(s"Printing result $result")
+    println(s"Printing ipt count ${countInterpreter.iptCount}")
   }
 
  }

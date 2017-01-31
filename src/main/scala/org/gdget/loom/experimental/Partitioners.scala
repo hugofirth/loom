@@ -113,7 +113,6 @@ case class FennelPartitioner(sizes: Map[PartId, Int], k: Int, numV: Int, numE: I
     }
 
     //Calculate the scores
-    //TODO: Rather than folding over the option, why not produce a list of Option then flattening?
     val scores = freePartitionCounts.map { case(pId, numNeighbours) =>
       //calculate alpha
       val alpha = math.sqrt(k) * (numE / math.pow(numV, 1.5))

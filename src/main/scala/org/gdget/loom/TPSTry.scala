@@ -80,7 +80,6 @@ object TPSTry {
   * any way to add to a TPSTryNode graph directly, because the semantics of a TPSTry forbid sub-graphs from being valid
   * TPSTries unless they have a root node, and every sub-graph of each graph represented by a node.
   *
-  * TODO: Finish adding mod prime p to all signature based operations
   *
   * @tparam V
   * @tparam E
@@ -252,9 +251,9 @@ object TPSTryNode {
 
     def apply[V, E[_], P <: Field](): TPSTryNode[V, E, P] = this.asInstanceOf[TPSTryNode[V, E, P]]
 
-    def unapply[V, E[_], P <: Field](a: TPSTryNode[V, E, P]) = this eq a
+    def unapply[V, E[_], P <: Field](a: TPSTryNode[V, E, P]): Boolean = this eq a
 
-    val isEmpty: Boolean = true
+    val isEmpty = true
 
     //TODO: Not really sure this is the right way to do things?
     val signature = Signature.zero[Nothing]
