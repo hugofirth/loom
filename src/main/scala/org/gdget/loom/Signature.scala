@@ -163,6 +163,7 @@ object Signature {
     //Calculate's edge factor and degree factors for l & r
     val rDegFactor = (Labelled[V].label(r) + (rDeg + 1)) mod field
     val lDegFactor = (Labelled[V].label(l) + (lDeg + 1)) mod field
+    //TOOD: Mod the subtraction if edges undirected
     val eFactor = (Labelled[V].label(l) - Labelled[V].label(r)) mod field
 
     //Lets sort the factors - yay for pattern matching assignment
